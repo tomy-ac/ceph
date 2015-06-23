@@ -1276,20 +1276,6 @@ protected:
   void send_remove_op(const hobject_t& oid, eversion_t v, pg_shard_t peer);
 
 
-  struct C_OSD_OndiskWriteUnlock : public Context {
-    ObjectContextRef obc, obc2, obc3;
-    C_OSD_OndiskWriteUnlock(
-      ObjectContextRef o,
-      ObjectContextRef o2 = ObjectContextRef(),
-      ObjectContextRef o3 = ObjectContextRef()) : obc(o), obc2(o2), obc3(o3) {}
-    void finish(int r) {
-      obc->ondisk_write_unlock();
-      if (obc2)
-	obc2->ondisk_write_unlock();
-      if (obc3)
-	obc3->ondisk_write_unlock();
-    }
-  };
   struct C_OSD_AppliedRecoveredObject : public Context {
     ReplicatedPGRef pg;
     ObjectContextRef obc;
