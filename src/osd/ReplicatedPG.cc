@@ -2893,7 +2893,6 @@ void ReplicatedPG::execute_ctx(OpContext *ctx)
 	log_op_stats(
 	  ctx->op,
 	  ctx->bytes_written,
-	  ctx->bytes_read,
 	  ctx->readable_stamp);
 
       if (m && m->wants_ondisk() && !ctx->sent_disk) {
@@ -2951,11 +2950,17 @@ void ReplicatedPG::reply_ctx(OpContext *ctx, int r, eversion_t v, version_t uv)
 
 void ReplicatedPG::log_op_stats(
   OpRequestRef op,
-  uint64_t inb,
   uint64_t outb,
   utime_t readable_stamp)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
+
+  uint64_t inb = 0;
+  for (vector<OSDOp>::iterator p = m->ops.begin();
+       p != m->ops.end();
+       ++p) {
+    inb += p->outdata.length();
+  }
 
   utime_t now = ceph_clock_now(cct);
   utime_t latency = now;
@@ -6738,8 +6743,8 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
       result = p->rval;
       break;
     }
-    ctx->bytes_read += p->outdata.length();
   }
+
   ctx->reply->claim_op_out_data(ctx->ops);
   ctx->reply->get_header().data_off = ctx->data_off;
 
@@ -6751,7 +6756,6 @@ void ReplicatedPG::complete_read_ctx(int result, OpContext *ctx)
       log_op_stats(
 	ctx->op,
 	ctx->bytes_written,
-	ctx->bytes_read,
 	ctx->readable_stamp);
       publish_stats_to_osd();
     }
