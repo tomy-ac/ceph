@@ -375,7 +375,8 @@ void ReplicatedPG::maybe_kick_recovery(
   if (!missing_loc.needs_recovery(soid, &v))
     return;
 
-  map<hobject_t, ObjectContextRef, hobject_t::BitwiseComparator>::const_iterator p = recovering.find(soid);
+  map<hobject_t, ObjectContextRef, hobject_t::BitwiseComparator>::const_iterator p =
+    recovering.find(soid);
   if (p != recovering.end()) {
     dout(7) << "object " << soid << " v " << v << ", already recovering." << dendl;
   } else if (missing_loc.is_unfound(soid)) {
@@ -386,7 +387,8 @@ void ReplicatedPG::maybe_kick_recovery(
     if (is_missing_object(soid)) {
       recover_missing(soid, v, cct->_conf->osd_client_op_priority, h);
     } else {
-      prep_object_replica_pushes(soid, v, h);
+      bool push_started = prep_object_replica_pushes(soid, v, h);
+      assert(push_started); // must have gotten lock
     }
     pgbackend->run_recovery_op(h, cct->_conf->osd_client_op_priority);
   }
