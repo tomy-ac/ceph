@@ -1493,6 +1493,38 @@ void ReplicatedPG::do_request(
       osd->reply_op_error(op, -EBLACKLISTED);
       return;
     }
+    m->finish_decode();
+    m->clear_payload();
+
+    if (m->has_flag(CEPH_OSD_FLAG_PARALLELEXEC)) {
+      // not implemented.
+      osd->reply_op_error(op, -EINVAL);
+      return;
+    }
+    if (op->rmw_flags == 0) {
+      int r = osd->osd->init_op_flags(op);
+      if (r) {
+	osd->reply_op_error(op, r);
+	return;
+      }
+    }
+    if ((m->get_flags() & (CEPH_OSD_FLAG_BALANCE_READS |
+			   CEPH_OSD_FLAG_LOCALIZE_READS)) &&
+	op->may_read() &&
+	!(op->may_write() || op->may_cache())) {
+      // balanced reads; any replica will do
+      if (!(is_primary() || is_replica())) {
+	osd->handle_misdirected_op(this, op);
+	return;
+      }
+    } else {
+      // normal case; must be primary
+      if (!is_primary()) {
+	osd->handle_misdirected_op(this, op);
+	return;
+      }
+    }
+
     if (is_primary()) {
       do_op(op); // do it now
     } else {
@@ -1721,40 +1753,6 @@ void ReplicatedPG::do_op(OpRequestRef& op)
 {
   MOSDOp *m = static_cast<MOSDOp*>(op->get_req());
   assert(m->get_type() == CEPH_MSG_OSD_OP);
-
-  m->finish_decode();
-  m->clear_payload();
-
-  if (m->has_flag(CEPH_OSD_FLAG_PARALLELEXEC)) {
-    // not implemented.
-    osd->reply_op_error(op, -EINVAL);
-    return;
-  }
-
-  if (op->rmw_flags == 0) {
-    int r = osd->osd->init_op_flags(op);
-    if (r) {
-      osd->reply_op_error(op, r);
-      return;
-    }
-  }
-
-  if ((m->get_flags() & (CEPH_OSD_FLAG_BALANCE_READS |
-			 CEPH_OSD_FLAG_LOCALIZE_READS)) &&
-      op->may_read() &&
-      !(op->may_write() || op->may_cache())) {
-    // balanced reads; any replica will do
-    if (!(is_primary() || is_replica())) {
-      osd->handle_misdirected_op(this, op);
-      return;
-    }
-  } else {
-    // normal case; must be primary
-    if (!is_primary()) {
-      osd->handle_misdirected_op(this, op);
-      return;
-    }
-  }
 
   if (op->includes_pg_op()) {
     if (pg_op_must_wait(m)) {
