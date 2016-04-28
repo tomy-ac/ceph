@@ -118,6 +118,7 @@ struct failure_info_t {
 };
 
 class OSDMonitor : public PaxosService {
+  CephContext *cct;
 public:
   OSDMap osdmap;
 
