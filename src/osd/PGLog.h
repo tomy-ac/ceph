@@ -632,13 +632,14 @@ public:
       missing.got(oid, v);
       
       // raise last_complete?
-      if (missing.missing.empty()) {
+      if (missing.get_items().empty()) {
 	log.complete_to = log.log.end();
 	info.last_complete = info.last_update;
       }
       while (log.complete_to != log.log.end()) {
-	if (missing.missing[missing.rmissing.begin()->second].need <=
-	    log.complete_to->version)
+	if (missing.get_items().at(
+	      missing.get_rmissing().begin()->second
+	      ).need <= log.complete_to->version)
 	  break;
 	if (info.last_complete < log.complete_to->version)
 	  info.last_complete = log.complete_to->version;
@@ -653,7 +654,9 @@ public:
   void activate_not_complete(pg_info_t &info) {
     log.complete_to = log.log.begin();
     while (log.complete_to->version <
-	   missing.missing[missing.rmissing.begin()->second].need)
+	   missing.get_items().at(
+	     missing.get_rmissing().begin()->second
+	     ).need)
       ++log.complete_to;
     assert(log.complete_to != log.log.end());
     if (log.complete_to == log.log.begin()) {

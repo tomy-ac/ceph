@@ -3948,7 +3948,7 @@ void pg_missing_t::rm(const hobject_t& oid, eversion_t v)
     rm(p);
 }
 
-void pg_missing_t::rm(const std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator &m)
+void pg_missing_t::rm(std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::const_iterator m)
 {
   rmissing.erase(m->second.need.version);
   missing.erase(m);
@@ -3962,7 +3962,7 @@ void pg_missing_t::got(const hobject_t& oid, eversion_t v)
   got(p);
 }
 
-void pg_missing_t::got(const std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator &m)
+void pg_missing_t::got(std::map<hobject_t, pg_missing_t::item, hobject_t::ComparatorWithDefault>::iterator m)
 {
   rmissing.erase(m->second.need.version);
   missing.erase(m);
