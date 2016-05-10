@@ -997,13 +997,13 @@ public:
     }
   }
 
-  void write_log(ObjectStore::Transaction& t,
+  void write_log_and_missing(ObjectStore::Transaction& t,
 		 map<string,bufferlist> *km,
 		 const coll_t& coll,
 		 const ghobject_t &log_oid,
 		 bool require_rollback);
 
-  static void write_log(
+  static void write_log_and_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist>* km,
     pg_log_t &log,
@@ -1011,7 +1011,7 @@ public:
     const ghobject_t &log_oid, map<eversion_t, hobject_t> &divergent_priors,
     bool require_rollback);
 
-  static void _write_log(
+  static void _write_log_and_missing(
     ObjectStore::Transaction& t,
     map<string,bufferlist>* km,
     pg_log_t &log,
