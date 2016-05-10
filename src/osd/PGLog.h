@@ -59,10 +59,10 @@ struct PGLog : DoutPrefixProvider {
   };
 
   /* Exceptions */
-  class read_log_error : public buffer::error {
+  class read_log_and_missing_error : public buffer::error {
   public:
-    explicit read_log_error(const char *what) {
-      snprintf(buf, sizeof(buf), "read_log_error: %s", what);
+    explicit read_log_and_missing_error(const char *what) {
+      snprintf(buf, sizeof(buf), "read_log_and_missing_error: %s", what);
     }
     const char *what() const throw () {
       return buf;
@@ -1027,10 +1027,10 @@ public:
     set<string> *log_keys_debug
     );
 
-  void read_log(ObjectStore *store, coll_t pg_coll,
+  void read_log_and_missing(ObjectStore *store, coll_t pg_coll,
 		coll_t log_coll, ghobject_t log_oid,
 		const pg_info_t &info, ostringstream &oss) {
-    return read_log(
+    return read_log_and_missing(
       store, pg_coll, log_coll, log_oid, info, divergent_priors,
       log, missing, oss,
       this,
@@ -1038,7 +1038,7 @@ public:
   }
 
   template <typename missing_type>
-  static void read_log(ObjectStore *store, coll_t pg_coll,
+  static void read_log_and_missing(ObjectStore *store, coll_t pg_coll,
     coll_t log_coll, ghobject_t log_oid,
     const pg_info_t &info, map<eversion_t, hobject_t> &divergent_priors,
     IndexedLog &log,
@@ -1046,7 +1046,7 @@ public:
     const DoutPrefixProvider *dpp = NULL,
     set<string> *log_keys_debug = 0
     ) {
-    ldpp_dout(dpp, 20) << "read_log coll " << pg_coll
+    ldpp_dout(dpp, 20) << "read_log_and_missing coll " << pg_coll
 		       << " log_oid " << log_oid << dendl;
 
     // legacy?
@@ -1069,7 +1069,7 @@ public:
 	bufferlist::iterator bp = bl.begin();
 	if (p->key() == "divergent_priors") {
 	  ::decode(divergent_priors, bp);
-	  ldpp_dout(dpp, 20) << "read_log " << divergent_priors.size()
+	  ldpp_dout(dpp, 20) << "read_log_and_missing " << divergent_priors.size()
 			     << " divergent_priors" << dendl;
 	} else if (p->key() == "can_rollback_to") {
 	  ::decode(log.can_rollback_to, bp);
@@ -1078,7 +1078,7 @@ public:
 	} else {
 	  pg_log_entry_t e;
 	  e.decode_with_checksum(bp);
-	  ldpp_dout(dpp, 20) << "read_log " << e << dendl;
+	  ldpp_dout(dpp, 20) << "read_log_and_missing " << e << dendl;
 	  if (!log.log.empty()) {
 	    pg_log_entry_t last_e(log.log.back());
 	    assert(last_e.version.version < e.version.version);
@@ -1096,7 +1096,7 @@ public:
 
     // build missing
     if (info.last_complete < info.last_update) {
-      ldpp_dout(dpp, 10) << "read_log checking for missing items over interval ("
+      ldpp_dout(dpp, 10) << "read_log_and_missing checking for missing items over interval ("
 			 << info.last_complete
 			 << "," << info.last_update << "]" << dendl;
 
@@ -1121,12 +1121,12 @@ public:
 	if (r >= 0) {
 	  object_info_t oi(bv);
 	  if (oi.version < i->version) {
-	    ldpp_dout(dpp, 15) << "read_log  missing " << *i
+	    ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i
 			       << " (have " << oi.version << ")" << dendl;
 	    missing.add(i->soid, i->version, oi.version);
 	  }
 	} else {
-	  ldpp_dout(dpp, 15) << "read_log  missing " << *i << dendl;
+	  ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i << dendl;
 	  missing.add(i->soid, i->version, eversion_t());
 	}
       }
@@ -1160,12 +1160,12 @@ public:
 	   */
 	  assert(oi.version == i->first);
 	} else {
-	  ldpp_dout(dpp, 15) << "read_log  missing " << *i << dendl;
+	  ldpp_dout(dpp, 15) << "read_log_and_missing  missing " << *i << dendl;
 	  missing.add(i->second, i->first, eversion_t());
 	}
       }
     }
-    ldpp_dout(dpp, 10) << "read_log done" << dendl;
+    ldpp_dout(dpp, 10) << "read_log_and_missing done" << dendl;
   }
 };
   
