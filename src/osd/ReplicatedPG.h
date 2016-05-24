@@ -609,7 +609,7 @@ public:
 
     ObjectModDesc mod_desc;
 
-    ObjectContext::RWState::State lock_type;
+    RWState::State lock_type;
     ObcLockManager lock_manager;
 
     OpContext(const OpContext& other);
@@ -634,7 +634,7 @@ public:
       sent_ack(false), sent_disk(false),
       async_read_result(0),
       inflightreads(0),
-      lock_type(ObjectContext::RWState::RWNONE) {
+      lock_type(RWState::RWNONE) {
       if (obc->ssc) {
 	new_snapset = obc->ssc->snapset;
 	snapset = &obc->ssc->snapset;
@@ -653,7 +653,7 @@ public:
       copy_cb(NULL),
       async_read_result(0),
       inflightreads(0),
-      lock_type(ObjectContext::RWState::RWNONE) {}
+      lock_type(RWState::RWNONE) {}
     void reset_obs(ObjectContextRef obc) {
       new_obs = ObjectState(obc->obs.oi, obc->obs.exists);
       if (obc->ssc) {
@@ -776,12 +776,12 @@ protected:
      * to get the second.
      */
     if (write_ordered && ctx->op->may_read()) {
-      ctx->lock_type = ObjectContext::RWState::RWEXCL;
+      ctx->lock_type = RWState::RWEXCL;
     } else if (write_ordered) {
-      ctx->lock_type = ObjectContext::RWState::RWWRITE;
+      ctx->lock_type = RWState::RWWRITE;
     } else {
       assert(ctx->op->may_read());
-      ctx->lock_type = ObjectContext::RWState::RWREAD;
+      ctx->lock_type = RWState::RWREAD;
     }
 
     if (ctx->snapset_obc) {
@@ -791,7 +791,7 @@ protected:
 	    ctx->snapset_obc->obs.oi.soid,
 	    ctx->snapset_obc,
 	    ctx->op)) {
-	ctx->lock_type = ObjectContext::RWState::RWNONE;
+	ctx->lock_type = RWState::RWNONE;
 	return false;
       }
     }
@@ -803,7 +803,7 @@ protected:
       return true;
     } else {
       assert(!ctx->snapset_obc);
-      ctx->lock_type = ObjectContext::RWState::RWNONE;
+      ctx->lock_type = RWState::RWNONE;
       return false;
     }
   }
@@ -982,6 +982,9 @@ protected:
 
   // projected object info
   SharedLRU<hobject_t, ObjectContext, hobject_t::ComparatorWithDefault> object_contexts;
+  SharedPtrRegistry<
+    hobject_t, RWState, hobject_t::ComparatorWithDefault> rwstate_registry;
+
   // map from oid.snapdir() to SnapSetContext *
   map<hobject_t, SnapSetContext*, hobject_t::BitwiseComparator> snapset_contexts;
   Mutex snapset_contexts_lock;

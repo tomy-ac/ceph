@@ -3385,6 +3385,170 @@ struct SnapSetContext {
     oid(o), ref(0), registered(false), exists(true) { }
 };
 
+struct RWState {
+  enum State {
+    RWNONE,
+    RWREAD,
+    RWWRITE,
+    RWEXCL,
+  };
+  static const char *get_state_name(State s) {
+    switch (s) {
+    case RWNONE: return "none";
+    case RWREAD: return "read";
+    case RWWRITE: return "write";
+    case RWEXCL: return "excl";
+    default: return "???";
+    }
+  }
+  const char *get_state_name() const {
+    return get_state_name(state);
+  }
+
+  list<OpRequestRef> waiters;  ///< ops waiting on state change
+  int count;              ///< number of readers or writers
+
+  State state:4;               ///< rw state
+  /// if set, restart backfill when we can get a read lock
+  bool recovery_read_marker:1;
+  /// if set, requeue snaptrim on lock release
+  bool snaptrimmer_write_marker:1;
+
+  RWState()
+    : count(0),
+      state(RWNONE),
+      recovery_read_marker(false),
+      snaptrimmer_write_marker(false)
+    {}
+  bool get_read(OpRequestRef op) {
+    if (get_read_lock()) {
+      return true;
+    } // else
+    waiters.push_back(op);
+    return false;
+  }
+  /// this function adjusts the counts if necessary
+  bool get_read_lock() {
+    // don't starve anybody!
+    if (!waiters.empty()) {
+      return false;
+    }
+    switch (state) {
+    case RWNONE:
+      assert(count == 0);
+      state = RWREAD;
+      // fall through
+    case RWREAD:
+      count++;
+      return true;
+    case RWWRITE:
+      return false;
+    case RWEXCL:
+      return false;
+    default:
+      assert(0 == "unhandled case");
+      return false;
+    }
+  }
+
+  bool get_write(OpRequestRef op, bool greedy=false) {
+    if (get_write_lock(greedy)) {
+      return true;
+    } // else
+    if (op)
+      waiters.push_back(op);
+    return false;
+  }
+  bool get_write_lock(bool greedy=false) {
+    if (!greedy) {
+      // don't starve anybody!
+      if (!waiters.empty() ||
+	  recovery_read_marker) {
+	return false;
+      }
+    }
+    switch (state) {
+    case RWNONE:
+      assert(count == 0);
+      state = RWWRITE;
+      // fall through
+    case RWWRITE:
+      count++;
+      return true;
+    case RWREAD:
+      return false;
+    case RWEXCL:
+      return false;
+    default:
+      assert(0 == "unhandled case");
+      return false;
+    }
+  }
+  bool get_excl_lock() {
+    switch (state) {
+    case RWNONE:
+      assert(count == 0);
+      state = RWEXCL;
+      count = 1;
+      return true;
+    case RWWRITE:
+      return false;
+    case RWREAD:
+      return false;
+    case RWEXCL:
+      return false;
+    default:
+      assert(0 == "unhandled case");
+      return false;
+    }
+  }
+  bool get_excl(OpRequestRef op) {
+    if (get_excl_lock()) {
+      return true;
+    } // else
+    if (op)
+      waiters.push_back(op);
+    return false;
+  }
+  /// same as get_write_lock, but ignore starvation
+  bool take_write_lock() {
+    if (state == RWWRITE) {
+      count++;
+      return true;
+    }
+    return get_write_lock();
+  }
+  void dec(list<OpRequestRef> *requeue) {
+    assert(count > 0);
+    assert(requeue);
+    count--;
+    if (count == 0) {
+      state = RWNONE;
+      requeue->splice(requeue->end(), waiters);
+    }
+  }
+  void put_read(list<OpRequestRef> *requeue) {
+    assert(state == RWREAD);
+    dec(requeue);
+  }
+  void put_write(list<OpRequestRef> *requeue) {
+    assert(state == RWWRITE);
+    dec(requeue);
+  }
+  void put_excl(list<OpRequestRef> *requeue) {
+    assert(state == RWEXCL);
+    dec(requeue);
+  }
+  void drop_excl_to_read(list<OpRequestRef> *requeue) {
+    assert(state == RWEXCL);
+    assert(count == 1);
+    state = RWREAD;
+    requeue->splice(requeue->end(), waiters);
+  }
+  bool empty() const { return state == RWNONE; }
+};
+typedef ceph::shared_ptr<RWState> RWStateRef;
+
 /*
   * keep tabs on object modifications that are in flight.
   * we need to know the projected existence, size, snapset,
@@ -3424,174 +3588,20 @@ struct ObjectContext {
     mod->setattrs(to_set);
   }
   
-  struct RWState {
-    enum State {
-      RWNONE,
-      RWREAD,
-      RWWRITE,
-      RWEXCL,
-    };
-    static const char *get_state_name(State s) {
-      switch (s) {
-      case RWNONE: return "none";
-      case RWREAD: return "read";
-      case RWWRITE: return "write";
-      case RWEXCL: return "excl";
-      default: return "???";
-      }
-    }
-    const char *get_state_name() const {
-      return get_state_name(state);
-    }
-
-    list<OpRequestRef> waiters;  ///< ops waiting on state change
-    int count;              ///< number of readers or writers
-
-    State state:4;               ///< rw state
-    /// if set, restart backfill when we can get a read lock
-    bool recovery_read_marker:1;
-    /// if set, requeue snaptrim on lock release
-    bool snaptrimmer_write_marker:1;
-
-    RWState()
-      : count(0),
-	state(RWNONE),
-	recovery_read_marker(false),
-	snaptrimmer_write_marker(false)
-    {}
-    bool get_read(OpRequestRef op) {
-      if (get_read_lock()) {
-	return true;
-      } // else
-      waiters.push_back(op);
-      return false;
-    }
-    /// this function adjusts the counts if necessary
-    bool get_read_lock() {
-      // don't starve anybody!
-      if (!waiters.empty()) {
-	return false;
-      }
-      switch (state) {
-      case RWNONE:
-	assert(count == 0);
-	state = RWREAD;
-	// fall through
-      case RWREAD:
-	count++;
-	return true;
-      case RWWRITE:
-	return false;
-      case RWEXCL:
-	return false;
-      default:
-	assert(0 == "unhandled case");
-	return false;
-      }
-    }
-
-    bool get_write(OpRequestRef op, bool greedy=false) {
-      if (get_write_lock(greedy)) {
-	return true;
-      } // else
-      if (op)
-	waiters.push_back(op);
-      return false;
-    }
-    bool get_write_lock(bool greedy=false) {
-      if (!greedy) {
-	// don't starve anybody!
-	if (!waiters.empty() ||
-	    recovery_read_marker) {
-	  return false;
-	}
-      }
-      switch (state) {
-      case RWNONE:
-	assert(count == 0);
-	state = RWWRITE;
-	// fall through
-      case RWWRITE:
-	count++;
-	return true;
-      case RWREAD:
-	return false;
-      case RWEXCL:
-	return false;
-      default:
-	assert(0 == "unhandled case");
-	return false;
-      }
-    }
-    bool get_excl_lock() {
-      switch (state) {
-      case RWNONE:
-	assert(count == 0);
-	state = RWEXCL;
-	count = 1;
-	return true;
-      case RWWRITE:
-	return false;
-      case RWREAD:
-	return false;
-      case RWEXCL:
-	return false;
-      default:
-	assert(0 == "unhandled case");
-	return false;
-      }
-    }
-    bool get_excl(OpRequestRef op) {
-      if (get_excl_lock()) {
-	return true;
-      } // else
-      if (op)
-	waiters.push_back(op);
-      return false;
-    }
-    /// same as get_write_lock, but ignore starvation
-    bool take_write_lock() {
-      if (state == RWWRITE) {
-	count++;
-	return true;
-      }
-      return get_write_lock();
-    }
-    void dec(list<OpRequestRef> *requeue) {
-      assert(count > 0);
-      assert(requeue);
-      count--;
-      if (count == 0) {
-	state = RWNONE;
-	requeue->splice(requeue->end(), waiters);
-      }
-    }
-    void put_read(list<OpRequestRef> *requeue) {
-      assert(state == RWREAD);
-      dec(requeue);
-    }
-    void put_write(list<OpRequestRef> *requeue) {
-      assert(state == RWWRITE);
-      dec(requeue);
-    }
-    void put_excl(list<OpRequestRef> *requeue) {
-      assert(state == RWEXCL);
-      dec(requeue);
-    }
-    bool empty() const { return state == RWNONE; }
-  } rwstate;
+  // must be valid
+  RWStateRef rwstate;
 
   bool get_read(OpRequestRef op) {
-    return rwstate.get_read(op);
+    return rwstate->get_read(op);
   }
   bool get_write(OpRequestRef op) {
-    return rwstate.get_write(op, false);
+    return rwstate->get_write(op, false);
   }
   bool take_write(OpRequestRef op) {
-    return rwstate.take_write_lock();
+    return rwstate->take_write_lock();
   }
   bool get_excl(OpRequestRef op) {
-    return rwstate.get_excl(op);
+    return rwstate->get_excl(op);
   }
   bool get_lock_type(OpRequestRef op, RWState::State type) {
     switch (type) {
@@ -3607,87 +3617,99 @@ struct ObjectContext {
     }
   }
   bool get_write_greedy(OpRequestRef op) {
-    return rwstate.get_write(op, true);
+    return rwstate->get_write(op, true);
   }
   bool get_snaptrimmer_write() {
-    if (rwstate.get_write_lock()) {
+    if (rwstate->get_write_lock()) {
       return true;
     } else {
-      rwstate.snaptrimmer_write_marker = true;
+      rwstate->snaptrimmer_write_marker = true;
       return false;
     }
   }
   bool get_read() {
-    return rwstate.get_read_lock();
+    return rwstate->get_read_lock();
   }
   bool get_recovery_read() {
-    rwstate.recovery_read_marker = true;
-    if (rwstate.get_read_lock()) {
+    rwstate->recovery_read_marker = true;
+    if (rwstate->get_read_lock()) {
       return true;
     }
     return false;
   }
+  bool try_get_recovery_excl() {
+    if (rwstate->get_excl_lock()) {
+      rwstate->recovery_read_marker = true;
+      return true;
+    }
+    return false;
+  }
+  void drop_recovery_excl_to_read(list<OpRequestRef> *ls) {
+    rwstate->drop_excl_to_read(ls);
+  }
   void drop_recovery_read(list<OpRequestRef> *ls) {
-    assert(rwstate.recovery_read_marker);
-    rwstate.put_read(ls);
-    rwstate.recovery_read_marker = false;
+    assert(rwstate->recovery_read_marker);
+    rwstate->put_read(ls);
+    rwstate->recovery_read_marker = false;
   }
   void put_read(list<OpRequestRef> *to_wake) {
-    rwstate.put_read(to_wake);
+    rwstate->put_read(to_wake);
   }
   void put_excl(list<OpRequestRef> *to_wake,
 		 bool *requeue_recovery,
 		 bool *requeue_snaptrimmer) {
-    rwstate.put_excl(to_wake);
-    if (rwstate.empty() && rwstate.recovery_read_marker) {
-      rwstate.recovery_read_marker = false;
+    rwstate->put_excl(to_wake);
+    if (rwstate->empty() && rwstate->recovery_read_marker) {
+      rwstate->recovery_read_marker = false;
       *requeue_recovery = true;
     }
-    if (rwstate.empty() && rwstate.snaptrimmer_write_marker) {
-      rwstate.snaptrimmer_write_marker = false;
+    if (rwstate->empty() && rwstate->snaptrimmer_write_marker) {
+      rwstate->snaptrimmer_write_marker = false;
       *requeue_snaptrimmer = true;
     }
   }
   void put_write(list<OpRequestRef> *to_wake,
 		 bool *requeue_recovery,
 		 bool *requeue_snaptrimmer) {
-    rwstate.put_write(to_wake);
-    if (rwstate.empty() && rwstate.recovery_read_marker) {
-      rwstate.recovery_read_marker = false;
+    rwstate->put_write(to_wake);
+    if (rwstate->empty() && rwstate->recovery_read_marker) {
+      rwstate->recovery_read_marker = false;
       *requeue_recovery = true;
     }
-    if (rwstate.empty() && rwstate.snaptrimmer_write_marker) {
-      rwstate.snaptrimmer_write_marker = false;
+    if (rwstate->empty() && rwstate->snaptrimmer_write_marker) {
+      rwstate->snaptrimmer_write_marker = false;
       *requeue_snaptrimmer = true;
     }
   }
   void put_lock_type(
-    ObjectContext::RWState::State type,
+    RWState::State type,
     list<OpRequestRef> *to_wake,
     bool *requeue_recovery,
     bool *requeue_snaptrimmer) {
     switch (type) {
-    case ObjectContext::RWState::RWWRITE:
+    case RWState::RWWRITE:
       return put_write(to_wake, requeue_recovery, requeue_snaptrimmer);
-    case ObjectContext::RWState::RWREAD:
+    case RWState::RWREAD:
       return put_read(to_wake);
-    case ObjectContext::RWState::RWEXCL:
+    case RWState::RWEXCL:
       return put_excl(to_wake, requeue_recovery, requeue_snaptrimmer);
     default:
       assert(0 == "invalid lock type");
     }
   }
   bool is_request_pending() {
-    return (rwstate.count > 0);
+    return (rwstate->count > 0);
   }
 
-  ObjectContext()
+  ObjectContext(RWStateRef rwstate)
     : ssc(NULL),
       destructor_callback(0),
-      blocked(false), requeue_scrub_on_unblock(false) {}
+      rwstate(rwstate),
+      blocked(false),
+      requeue_scrub_on_unblock(false) {}
 
   ~ObjectContext() {
-    assert(rwstate.empty());
+    assert(rwstate->empty());
     if (destructor_callback)
       destructor_callback->complete(0);
   }
@@ -3716,7 +3738,7 @@ inline ostream& operator<<(ostream& out, const ObjectState& obs)
   return out;
 }
 
-inline ostream& operator<<(ostream& out, const ObjectContext::RWState& rw)
+inline ostream& operator<<(ostream& out, const RWState& rw)
 {
   return out << "rwstate(" << rw.get_state_name()
 	     << " n=" << rw.count
@@ -3735,10 +3757,10 @@ ostream& operator<<(ostream& out, const object_info_t& oi);
 class ObcLockManager {
   struct ObjectLockState {
     ObjectContextRef obc;
-    ObjectContext::RWState::State type;
+    RWState::State type;
     ObjectLockState(
       ObjectContextRef obc,
-      ObjectContext::RWState::State type)
+      RWState::State type)
       : obc(obc), type(type) {}
   };
   map<hobject_t, ObjectLockState, hobject_t::BitwiseComparator> locks;
@@ -3750,7 +3772,7 @@ public:
     return locks.empty();
   }
   bool get_lock_type(
-    ObjectContext::RWState::State type,
+    RWState::State type,
     const hobject_t &hoid,
     ObjectContextRef obc,
     OpRequestRef op) {
@@ -3767,10 +3789,10 @@ public:
     const hobject_t &hoid,
     ObjectContextRef obc) {
     assert(locks.find(hoid) == locks.end());
-    if (obc->rwstate.take_write_lock()) {
+    if (obc->rwstate->take_write_lock()) {
       locks.insert(
 	make_pair(
-	  hoid, ObjectLockState(obc, ObjectContext::RWState::RWWRITE)));
+	  hoid, ObjectLockState(obc, RWState::RWWRITE)));
       return true;
     } else {
       return false;
@@ -3784,7 +3806,7 @@ public:
     if (obc->get_snaptrimmer_write()) {
       locks.insert(
 	make_pair(
-	  hoid, ObjectLockState(obc, ObjectContext::RWState::RWWRITE)));
+	  hoid, ObjectLockState(obc, RWState::RWWRITE)));
       return true;
     } else {
       return false;
@@ -3799,7 +3821,7 @@ public:
     if (obc->get_write_greedy(op)) {
       locks.insert(
 	make_pair(
-	  hoid, ObjectLockState(obc, ObjectContext::RWState::RWWRITE)));
+	  hoid, ObjectLockState(obc, RWState::RWWRITE)));
       return true;
     } else {
       return false;

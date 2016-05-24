@@ -4342,7 +4342,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       {
 	tracepoint(osd, do_osd_op_pre_try_flush, soid.oid.name.c_str(), soid.snap.val);
-	if (ctx->lock_type != ObjectContext::RWState::RWNONE) {
+	if (ctx->lock_type != RWState::RWNONE) {
 	  dout(10) << "cache-try-flush without SKIPRWLOCKS flag set" << dendl;
 	  result = -EINVAL;
 	  break;
@@ -4374,7 +4374,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
       ++ctx->num_write;
       {
 	tracepoint(osd, do_osd_op_pre_cache_flush, soid.oid.name.c_str(), soid.snap.val);
-	if (ctx->lock_type == ObjectContext::RWState::RWNONE) {
+	if (ctx->lock_type == RWState::RWNONE) {
 	  dout(10) << "cache-flush with SKIPRWLOCKS flag set" << dendl;
 	  result = -EINVAL;
 	  break;
@@ -6150,7 +6150,9 @@ void ReplicatedPG::make_writeable(OpContext *ctx)
     object_info_t static_snap_oi(coid);
     object_info_t *snap_oi;
     if (is_primary()) {
-      ctx->clone_obc = object_contexts.lookup_or_create(static_snap_oi.soid);
+      ctx->clone_obc = object_contexts.lookup_or_create(
+	static_snap_oi.soid,
+	rwstate_registry.lookup_or_create(static_snap_oi.soid));
       ctx->clone_obc->destructor_callback = new C_PG_ObjectContext(this, ctx->clone_obc.get());
       ctx->clone_obc->obs.oi = static_snap_oi;
       ctx->clone_obc->obs.exists = true;
@@ -6501,15 +6503,15 @@ void ReplicatedPG::finish_ctx(OpContext *ctx, int log_op_type, bool maintain_ssc
       if (!ctx->snapset_obc)
 	ctx->snapset_obc = get_object_context(snapoid, true);
       bool got = false;
-      if (ctx->lock_type == ObjectContext::RWState::RWWRITE) {
+      if (ctx->lock_type == RWState::RWWRITE) {
 	got = ctx->lock_manager.get_write_greedy(
 	  snapoid,
 	  ctx->snapset_obc,
 	  ctx->op);
       } else {
-	assert(ctx->lock_type == ObjectContext::RWState::RWEXCL);
+	assert(ctx->lock_type == RWState::RWEXCL);
 	got = ctx->lock_manager.get_lock_type(
-	  ObjectContext::RWState::RWEXCL,
+	  RWState::RWEXCL,
 	  snapoid,
 	  ctx->snapset_obc,
 	  ctx->op);
@@ -7462,7 +7464,8 @@ void ReplicatedPG::finish_promote(int r, CopyResults *results,
 	  obc)) {
       assert(0 == "problem!");
     }
-    dout(20) << __func__ << " took lock on obc, " << obc->rwstate << dendl;
+    dout(20) << __func__ << " took lock on obc, " << *(obc->rwstate)
+             << dendl;
 
     finish_ctx(tctx.get(), pg_log_entry_t::PROMOTE);
 
@@ -7563,7 +7566,7 @@ void ReplicatedPG::finish_promote(int r, CopyResults *results,
 	obc)) {
     assert(0 == "problem!");
   }
-  dout(20) << __func__ << " took lock on obc, " << obc->rwstate << dendl;
+  dout(20) << __func__ << " took lock on obc, " << *(obc->rwstate) << dendl;
 
   finish_ctx(tctx.get(), pg_log_entry_t::PROMOTE);
 
@@ -7983,7 +7986,7 @@ int ReplicatedPG::try_flush_mark_clean(FlushOpRef fop)
   // try to take the lock manually, since we don't
   // have a ctx yet.
   if (ctx->lock_manager.get_lock_type(
-	ObjectContext::RWState::RWWRITE,
+	RWState::RWWRITE,
 	oid,
 	obc,
 	fop->op)) {
@@ -8682,7 +8685,10 @@ void ReplicatedPG::handle_watch_timeout(WatchRef watch)
 ObjectContextRef ReplicatedPG::create_object_context(const object_info_t& oi,
 						     SnapSetContext *ssc)
 {
-  ObjectContextRef obc(object_contexts.lookup_or_create(oi.soid));
+  ObjectContextRef obc(
+    object_contexts.lookup_or_create(
+      oi.soid,
+      rwstate_registry.lookup_or_create(oi.soid)));
   assert(obc->destructor_callback == NULL);
   obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());  
   obc->obs.oi = oi;
@@ -8750,7 +8756,9 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 
     assert(oi.soid.pool == (int64_t)info.pgid.pool());
 
-    obc = object_contexts.lookup_or_create(oi.soid);
+    obc = object_contexts.lookup_or_create(
+      oi.soid,
+      rwstate_registry.lookup_or_create(oi.soid));
     obc->destructor_callback = new C_PG_ObjectContext(this, obc.get());
     obc->obs.oi = oi;
     obc->obs.exists = true;
@@ -9615,7 +9623,7 @@ void ReplicatedPG::mark_all_unfound_lost(
 
     if (obc) {
       bool got = manager.get_lock_type(
-	ObjectContext::RWState::RWEXCL,
+	RWState::RWEXCL,
 	oid,
 	obc,
 	OpRequestRef());
@@ -11954,7 +11962,7 @@ bool ReplicatedPG::agent_maybe_evict(ObjectContextRef& obc, bool after_flush)
   OpContextUPtr ctx = simple_opc_create(obc);
 
   if (!ctx->lock_manager.get_lock_type(
-	ObjectContext::RWState::RWWRITE,
+	RWState::RWWRITE,
 	obc->obs.oi.soid,
 	obc,
 	OpRequestRef())) {
