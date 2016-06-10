@@ -166,7 +166,7 @@ OPTION(heartbeat_file, OPT_STR, "")
 OPTION(heartbeat_inject_failure, OPT_INT, 0)    // force an unhealthy heartbeat for N seconds
 OPTION(perf, OPT_BOOL, true)       // enable internal perf counters
 
-OPTION(ms_type, OPT_STR, "simple")   // messenger backend
+OPTION(ms_type, OPT_STR, "async")   // messenger backend
 OPTION(ms_tcp_nodelay, OPT_BOOL, true)
 OPTION(ms_tcp_rcvbuf, OPT_INT, 0)
 OPTION(ms_tcp_prefetch_max_size, OPT_INT, 4096) // max prefetch size, we limit this to avoid extra memcpy
@@ -402,7 +402,7 @@ OPTION(client_permissions, OPT_BOOL, true)
 OPTION(client_dirsize_rbytes, OPT_BOOL, true)
 
 // note: the max amount of "in flight" dirty data is roughly (max - target)
-OPTION(fuse_use_invalidate_cb, OPT_BOOL, false) // use fuse 2.8+ invalidate callback to keep page cache consistent
+OPTION(fuse_use_invalidate_cb, OPT_BOOL, true) // use fuse 2.8+ invalidate callback to keep page cache consistent
 OPTION(fuse_allow_other, OPT_BOOL, true)
 OPTION(fuse_default_permissions, OPT_BOOL, true)
 OPTION(fuse_big_writes, OPT_BOOL, true)
@@ -416,7 +416,7 @@ OPTION(client_try_dentry_invalidate, OPT_BOOL, true) // the client should try to
 OPTION(client_die_on_failed_remount, OPT_BOOL, true)
 OPTION(client_check_pool_perm, OPT_BOOL, true)
 OPTION(client_use_faked_inos, OPT_BOOL, false)
-OPTION(client_mds_namespace, OPT_INT, -1)
+OPTION(client_mds_namespace, OPT_STR, "")
 
 OPTION(crush_location, OPT_STR, "")       // whitespace-separated list of key=value pairs describing crush location
 OPTION(crush_location_hook, OPT_STR, "")
@@ -697,7 +697,7 @@ OPTION(osd_recovery_threads, OPT_INT, 1)
 OPTION(osd_recover_clone_overlap, OPT_BOOL, true)   // preserve clone_overlap during recovery/migration
 OPTION(osd_op_num_threads_per_shard, OPT_INT, 2)
 OPTION(osd_op_num_shards, OPT_INT, 5)
-OPTION(osd_op_queue, OPT_STR, "prio") // PrioritzedQueue (prio), Weighted Priority Queue (wpq), or debug_random
+OPTION(osd_op_queue, OPT_STR, "wpq") // PrioritzedQueue (prio), Weighted Priority Queue (wpq), or debug_random
 OPTION(osd_op_queue_cut_off, OPT_STR, "low") // Min priority to go to strict queue. (low, high, debug_random)
 
 // Set to true for testing.  Users should NOT set this.

@@ -59,6 +59,7 @@
 #include "messages/MClientCapRelease.h"
 #include "messages/MMDSMap.h"
 #include "messages/MFSMap.h"
+#include "messages/MFSMapUser.h"
 
 #include "mon/MonClient.h"
 
@@ -244,7 +245,7 @@ Client::Client(Messenger *m, MonClient *mc)
     objecter_finisher(m->cct),
     tick_event(NULL),
     monclient(mc), messenger(m), whoami(m->get_myname().num()),
-    cap_epoch_barrier(0), fsmap(nullptr),
+    cap_epoch_barrier(0), fsmap(nullptr), fsmap_user(nullptr),
     last_tid(0), oldest_tid(0), last_flush_tid(1),
     initialized(false), authenticated(false),
     mounted(false), unmounting(false),
@@ -488,18 +489,6 @@ int Client::init()
   objecter->start();
 
   monclient->set_want_keys(CEPH_ENTITY_TYPE_MDS | CEPH_ENTITY_TYPE_OSD);
-
-  std::string want = "mdsmap";
-  const auto &want_ns = cct->_conf->client_mds_namespace;
-  if (want_ns != FS_CLUSTER_ID_NONE) {
-    std::ostringstream oss;
-    oss << want << "." << want_ns;
-    want = oss.str();
-  }
-  ldout(cct, 10) << "Subscribing to map '" << want << "'" << dendl;
-
-  monclient->sub_want(want, 0, 0);
-  monclient->renew_subs();
 
   // logger
   PerfCountersBuilder plb(cct, "client", l_c_first, l_c_last);
@@ -2378,6 +2367,9 @@ bool Client::ms_dispatch(Message *m)
   case CEPH_MSG_FS_MAP:
     handle_fs_map(static_cast<MFSMap*>(m));
     break;
+  case CEPH_MSG_FS_MAP_USER:
+    handle_fs_map_user(static_cast<MFSMapUser*>(m));
+    break;
   case CEPH_MSG_CLIENT_SESSION:
     handle_client_session(static_cast<MClientSession*>(m));
     break;
@@ -2446,6 +2438,17 @@ void Client::handle_fs_map(MFSMap *m)
   signal_cond_list(waiting_for_fsmap);
 
   monclient->sub_got("fsmap", fsmap->get_epoch());
+}
+
+void Client::handle_fs_map_user(MFSMapUser *m)
+{
+  delete fsmap_user;
+  fsmap_user = new FSMapUser;
+  *fsmap_user = m->get_fsmap();
+  m->put();
+
+  monclient->sub_got("fsmap.user", fsmap_user->get_epoch());
+  signal_cond_list(waiting_for_fsmap);
 }
 
 void Client::handle_mds_map(MMDSMap* m)
@@ -2986,8 +2989,13 @@ int Client::get_caps(Inode *in, int need, int want, int *phave, loff_t endoff)
     return r;
 
   while (1) {
-    if (!in->is_any_caps())
-      return -ESTALE;
+    int file_wanted = in->caps_file_wanted();
+    if ((file_wanted & need) != need) {
+      ldout(cct, 10) << "get_caps " << *in << " need " << ccap_string(need)
+		     << " file_wanted " << ccap_string(file_wanted) << ", EBADF "
+		     << dendl;
+      return -EBADF;
+    }
 
     int implemented;
     int have = in->caps_issued(&implemented);
@@ -3049,6 +3057,20 @@ int Client::get_caps(Inode *in, int need, int want, int *phave, loff_t endoff)
     if ((need & CEPH_CAP_FILE_WR) && in->auth_cap &&
 	in->auth_cap->session->readonly)
       return -EROFS;
+
+    if (in->flags & I_CAP_DROPPED) {
+      int mds_wanted = in->caps_mds_wanted();
+      if ((mds_wanted & need) != need) {
+	int ret = _renew_caps(in);
+	if (ret < 0)
+	  return ret;
+	continue;
+      }
+      if ((mds_wanted & file_wanted) ==
+	  (file_wanted & (CEPH_CAP_FILE_RD | CEPH_CAP_FILE_WR))) {
+	in->flags &= ~I_CAP_DROPPED;
+      }
+    }
 
     if (waitfor_caps)
       wait_on_list(in->waitfor_caps);
@@ -3500,31 +3522,29 @@ void Client::wake_inode_waiters(MetaSession *s)
 class C_Client_CacheInvalidate : public Context  {
 private:
   Client *client;
-  InodeRef inode;
+  vinodeno_t ino;
   int64_t offset, length;
 public:
   C_Client_CacheInvalidate(Client *c, Inode *in, int64_t off, int64_t len) :
-			   client(c), inode(in), offset(off), length(len) {
+    client(c), offset(off), length(len) {
+    if (client->use_faked_inos())
+      ino = vinodeno_t(in->faked_ino, CEPH_NOSNAP);
+    else
+      ino = in->vino();
   }
   void finish(int r) {
     // _async_invalidate takes the lock when it needs to, call this back from outside of lock.
     assert(!client->client_lock.is_locked_by_me());
-    client->_async_invalidate(inode, offset, length);
+    client->_async_invalidate(ino, offset, length);
   }
 };
 
-void Client::_async_invalidate(InodeRef& in, int64_t off, int64_t len)
+void Client::_async_invalidate(vinodeno_t ino, int64_t off, int64_t len)
 {
-  ldout(cct, 10) << "_async_invalidate " << off << "~" << len << dendl;
-  if (use_faked_inos())
-    ino_invalidate_cb(callback_handle, vinodeno_t(in->faked_ino, CEPH_NOSNAP), off, len);
-  else
-    ino_invalidate_cb(callback_handle, in->vino(), off, len);
-
-  client_lock.Lock();
-  in.reset(); // put inode inside client_lock
-  client_lock.Unlock();
-  ldout(cct, 10) << "_async_invalidate " << off << "~" << len << " done" << dendl;
+  if (unmounting)
+    return;
+  ldout(cct, 10) << "_async_invalidate " << ino << " " << off << "~" << len << dendl;
+  ino_invalidate_cb(callback_handle, ino, off, len);
 }
 
 void Client::_schedule_invalidate_callback(Inode *in, int64_t off, int64_t len) {
@@ -3798,6 +3818,7 @@ void Client::remove_session_caps(MetaSession *s)
       dirty_caps = in->dirty_caps | in->flushing_caps;
       in->wanted_max_size = 0;
       in->requested_max_size = 0;
+      in->flags |= I_CAP_DROPPED;
     }
     remove_cap(cap, false);
     signal_cond_list(in->waitfor_caps);
@@ -4553,6 +4574,9 @@ void Client::handle_cap_export(MetaSession *session, Inode *in, MClientCaps *m)
 		       m->peer.seq - 1, m->peer.mseq, (uint64_t)-1,
 		       cap == in->auth_cap ? CEPH_CAP_FLAG_AUTH : 0);
       }
+    } else {
+      if (cap == in->auth_cap)
+	in->flags |= I_CAP_DROPPED;
     }
 
     remove_cap(cap, false);
@@ -4697,6 +4721,8 @@ public:
 
 void Client::_async_dentry_invalidate(vinodeno_t dirino, vinodeno_t ino, string& name)
 {
+  if (unmounting)
+    return;
   ldout(cct, 10) << "_async_dentry_invalidate '" << name << "' ino " << ino
 		 << " in dir " << dirino << dendl;
   dentry_invalidate_cb(callback_handle, dirino, ino, name);
@@ -5269,6 +5295,49 @@ int Client::authenticate()
   return 0;
 }
 
+int Client::fetch_fsmap(bool user)
+{
+  int r;
+  // Retrieve FSMap to enable looking up daemon addresses.  We need FSMap
+  // rather than MDSMap because no one MDSMap contains all the daemons, and
+  // a `tell` can address any daemon.
+  version_t fsmap_latest;
+  do {
+    C_SaferCond cond;
+    monclient->get_version("fsmap", &fsmap_latest, NULL, &cond);
+    client_lock.Unlock();
+    r = cond.wait();
+    client_lock.Lock();
+  } while (r == -EAGAIN);
+
+  if (r < 0) {
+    lderr(cct) << "Failed to learn FSMap version: " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  ldout(cct, 10) << __func__ << " learned FSMap version " << fsmap_latest << dendl;
+
+  if (user) {
+    if (fsmap_user == nullptr || fsmap_user->get_epoch() < fsmap_latest) {
+      monclient->sub_want("fsmap.user", fsmap_latest, CEPH_SUBSCRIBE_ONETIME);
+      monclient->renew_subs();
+      wait_on_list(waiting_for_fsmap);
+    }
+    assert(fsmap_user != nullptr);
+    assert(fsmap_user->get_epoch() >= fsmap_latest);
+  } else {
+    if (fsmap == nullptr || fsmap->get_epoch() < fsmap_latest) {
+      monclient->sub_want("fsmap", fsmap_latest, CEPH_SUBSCRIBE_ONETIME);
+      monclient->renew_subs();
+      wait_on_list(waiting_for_fsmap);
+    }
+    assert(fsmap != nullptr);
+    assert(fsmap->get_epoch() >= fsmap_latest);
+  }
+  ldout(cct, 10) << __func__ << " finished waiting for FSMap version "
+		 << fsmap_latest << dendl;
+  return 0;
+}
 
 /**
  *
@@ -5293,33 +5362,10 @@ int Client::mds_command(
     return r;
   }
 
-  // Retrieve FSMap to enable looking up daemon addresses.  We need FSMap
-  // rather than MDSMap because no one MDSMap contains all the daemons, and
-  // a `tell` can address any daemon.
-  version_t fsmap_latest;
-  do {
-    C_SaferCond cond;
-    monclient->get_version("fsmap", &fsmap_latest, NULL, &cond);
-    client_lock.Unlock();
-    r = cond.wait();
-    client_lock.Lock();
-  } while (r == -EAGAIN);
-  ldout(cct, 20) << "Learned FSMap version " << fsmap_latest << dendl;
-
+  r = fetch_fsmap(false);
   if (r < 0) {
-    lderr(cct) << "Failed to learn FSMap version: " << cpp_strerror(r) << dendl;
     return r;
   }
-
-  if (fsmap == nullptr || fsmap->get_epoch() < fsmap_latest) {
-    monclient->sub_want("fsmap", fsmap_latest, CEPH_SUBSCRIBE_ONETIME);
-    monclient->renew_subs();
-    wait_on_list(waiting_for_fsmap);
-  }
-  assert(fsmap != nullptr);
-  assert(fsmap->get_epoch() >= fsmap_latest);
-  ldout(cct, 20) << "Finished waiting for FSMap version " << fsmap_latest
-    << dendl;
 
   // Look up MDS target(s) of the command
   std::vector<mds_gid_t> targets;
@@ -5422,9 +5468,27 @@ int Client::mount(const std::string &mount_root, bool require_mds)
     return r;
   }
 
+  std::string want = "mdsmap";
+  const auto &mds_ns = cct->_conf->client_mds_namespace;
+  if (!mds_ns.empty()) {
+    r = fetch_fsmap(true);
+    if (r < 0)
+      return r;
+    fs_cluster_id_t cid = fsmap_user->get_fs_cid(mds_ns);
+    if (cid == FS_CLUSTER_ID_NONE)
+      return -ENOENT;
+
+    std::ostringstream oss;
+    oss << want << "." << cid;
+    want = oss.str();
+  }
+  ldout(cct, 10) << "Subscribing to map '" << want << "'" << dendl;
+
+  monclient->sub_want(want, 0, 0);
+  monclient->renew_subs();
+
   tick(); // start tick
   
-  ldout(cct, 2) << "mounted: have mdsmap " << mdsmap->get_epoch() << dendl;
   if (require_mds) {
     while (1) {
       auto availability = mdsmap->is_cluster_available();
@@ -7731,6 +7795,39 @@ int Client::_open(Inode *in, int flags, mode_t mode, Fh **fhp, int uid, int gid)
   return result;
 }
 
+int Client::_renew_caps(Inode *in)
+{
+  int wanted = in->caps_file_wanted();
+  if (in->is_any_caps() &&
+      ((wanted & CEPH_CAP_ANY_WR) == 0 || in->auth_cap)) {
+    check_caps(in, true);
+    return 0;
+  }
+
+  int flags = 0;
+  if ((wanted & CEPH_CAP_FILE_RD) && (wanted & CEPH_CAP_FILE_WR))
+    flags = O_RDWR;
+  else if (wanted & CEPH_CAP_FILE_RD)
+    flags = O_RDONLY;
+  else if (wanted & CEPH_CAP_FILE_WR)
+    flags = O_WRONLY;
+
+  MetaRequest *req = new MetaRequest(CEPH_MDS_OP_OPEN);
+  filepath path;
+  in->make_nosnap_relative_path(path);
+  req->set_filepath(path);
+  req->head.args.open.flags = flags;
+  req->head.args.open.pool = -1;
+  if (cct->_conf->client_debug_getattr_caps)
+    req->head.args.open.mask = DEBUG_GETATTR_CAPS;
+  else
+    req->head.args.open.mask = 0;
+  req->set_inode(in);
+
+  int ret = make_request(req, -1, -1);
+  return ret;
+}
+
 int Client::close(int fd)
 {
   ldout(cct, 3) << "close enter(" << fd << ")" << dendl;
@@ -7903,7 +8000,7 @@ int Client::read(int fd, char *buf, loff_t size, loff_t offset)
 int Client::preadv(int fd, const struct iovec *iov, int iovcnt, loff_t offset)
 {
   if (iovcnt < 0)
-    return EINVAL;
+    return -EINVAL;
   return _preadv_pwritev(fd, iov, iovcnt, offset, false);
 }
 
@@ -8244,7 +8341,7 @@ int Client::write(int fd, const char *buf, loff_t size, loff_t offset)
 int Client::pwritev(int fd, const struct iovec *iov, int iovcnt, int64_t offset)
 {
   if (iovcnt < 0)
-    return EINVAL;
+    return -EINVAL;
   return _preadv_pwritev(fd, iov, iovcnt, offset, true);
 }
 
@@ -11061,8 +11158,8 @@ int Client::ll_get_stripe_osd(Inode *in, uint64_t blockno,
       pg_t pg = (pg_t)olayout.ol_pgid;
       vector<int> osds;
       int primary;
-      o.pg_to_osds(pg, &osds, &primary);
-      return osds[0];
+      o.pg_to_acting_osds(pg, &osds, &primary);
+      return primary;
     });
 }
 
