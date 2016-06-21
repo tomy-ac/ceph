@@ -9268,7 +9268,8 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
 
   // resolve oid to a particular clone
   SnapSetContextRef ssc = get_snapset_context(oid, can_create);
-  if (!ssc || !(ssc->exists) || can_create) {
+  if (!ssc || (!ssc->exists && !can_create)) {
+    assert(!can_create);
     dout(20) << __func__ << " " << oid << " no snapset" << dendl;
     if (pmissing)
       *pmissing = head;  // start by getting the head
@@ -9439,7 +9440,6 @@ SnapSetContextRef ReplicatedPG::get_snapset_context(
     snapset_contexts.lookup(oid.get_snapdir());
   if (ssc) {
     if (can_create || ssc->exists) {
-      ssc->exists = true;
       return ssc;
     } else {
       return SnapSetContextRef();
