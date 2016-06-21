@@ -9187,9 +9187,10 @@ ObjectContextRef ReplicatedPG::get_object_context(const hobject_t& soid,
 
     SnapSetContextRef ssc = get_snapset_context(
       soid,
-      true,
+      can_create,
       ssattr,
-      false);
+      r != -ENOENT);
+    assert(ssc);
     obc = create_object_context(
       oi,
       ssc,
@@ -9447,7 +9448,6 @@ SnapSetContextRef ReplicatedPG::get_snapset_context(
   } else {
     ssc = snapset_contexts.lookup_or_create(
       oid.get_snapdir(), oid.get_snapdir());
-    ssc->exists = false;
     if (oid_existed) {
       int r = get_object_snapset(
 	oid,
