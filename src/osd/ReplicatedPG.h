@@ -1145,6 +1145,11 @@ protected:
     }
   };
 
+  int validate_snap_mapping(
+    snapid_t snap,
+    const SnapSet &ss,
+    const object_info_t &oi) const;
+
   int find_object_context(const hobject_t& oid,
 			  ObjectContextRef *pobc,
 			  bool can_create,

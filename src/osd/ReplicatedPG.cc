@@ -9097,19 +9097,10 @@ int ReplicatedPG::find_object_info_and_get_read_locks(
     goto error;
   }
 
-  if (coid.is_snap()) {
-    dout(20) << __func__ << " " << soid << " snaps " << oi->snaps
-	     << dendl;
-    snapid_t first = oi->snaps[oi->snaps.size()-1];
-    snapid_t last = oi->snaps[0];
-    if (first > soid.snap) {
-      dout(20) << __func__ << " " << soid << " [" << first << "," << last
-	       << "] does not contain " << coid.snap << " -- DNE" << dendl;
-      r = -ENOENT;
-      goto error;
-    }
+
+  if ((r = validate_snap_mapping(soid.snap, snapset, *oi)) == 0) {
+    return 0;
   }
-  return 0;
 
 error:
   list<OpRequestRef> to_requeue;
@@ -9226,6 +9217,56 @@ void ReplicatedPG::context_registry_on_change()
   }
 }
 
+/*
+ * Validates that a particular snap maps to the given clone
+ * rather than to -ENOENT
+ */
+int ReplicatedPG::validate_snap_mapping(
+  snapid_t snap,
+  const SnapSet &ss,
+  const object_info_t &oi) const
+{
+  dout(20) << __func__ << ": validating snap " << snap
+	   << " for snapset " << ss 
+	   << " and object_info " << oi 
+	   << dendl;
+  const hobject_t &coid = oi.soid;
+  if (coid.is_snap()) {
+    if (oi.snaps.empty()) {
+      osd->clog->error() << info.pgid << " oi for " << coid
+			 << " has empty snaps"
+			 << " but claims to exist";
+      derr << info.pgid << " oi for " << coid << " has empty snaps"
+	   << " but claims to exist" << dendl;
+      return -ENOENT;
+    }
+    dout(20) << "find_object_context  " << coid << " snaps " << oi.snaps
+	     << dendl;
+    snapid_t first = *(oi.snaps.rbegin());
+    snapid_t last = *(oi.snaps.begin());
+    if (first > snap) {
+      dout(20) << "find_object_context  " << coid << " ["
+	       << first << "," << last
+	       << "] does not contain "
+	       << snap << " -- DNE" << dendl;
+      return -ENOENT;
+    }
+    dout(20) << "find_object_context  " << coid << " [" << first << "," << last
+	     << "] contains " << snap << " -- HIT " << dendl;
+    return 0;
+  } else {
+    if (snap > ss.seq) {
+      dout(20) << "find_object_context  -- HIT " << snap
+	       << " is " << coid << dendl;
+      return 0;
+    } else {
+      dout(20) << "find_object_context  -- MISS " << snap
+	       << " would map to head, but <= snapset seq" << dendl;
+      return -ENOENT;
+    }
+  }
+}
+
 
 /*
  * If we return an error, and set *pmissing, then promoting that
@@ -9329,38 +9370,9 @@ int ReplicatedPG::find_object_context(const hobject_t& oid,
   }
 
   if (!map_snapid_to_clone) {
-    if (coid.is_snap()) {
-      if (obc->obs.oi.snaps.empty()) {
-	osd->clog->error() << info.pgid << " oi for " << coid
-			   << " has empty snaps"
-			   << " but claims to exist";
-	derr << info.pgid << " oi for " << coid << " has empty snaps"
-	     << " but claims to exist" << dendl;
-	return -ENOENT;
-      }
-      dout(20) << "find_object_context  " << coid << " snaps " << obc->obs.oi.snaps
-	       << dendl;
-      snapid_t first = obc->obs.oi.snaps[obc->obs.oi.snaps.size()-1];
-      snapid_t last = obc->obs.oi.snaps[0];
-      if (first > oid.snap) {
-	dout(20) << "find_object_context  " << coid << " ["
-		 << first << "," << last
-		 << "] does not contain "
-		 << coid.snap << " -- DNE" << dendl;
-	return -ENOENT;
-      }
-      dout(20) << "find_object_context  " << oid << " [" << first << "," << last
-	       << "] contains " << coid.snap << " -- HIT " << obc->obs << dendl;
-    } else {
-      if (oid.snap > ssc->snapset.seq) {
-	dout(20) << "find_object_context  -- HIT " << oid
-		 << " is " << coid << dendl;
-      } else {
-	dout(20) << "find_object_context  -- MISS " << oid
-		 << " would map to head, but <= snapset seq" << dendl;
-	return -ENOENT;
-      }
-    }
+    int r = validate_snap_mapping(oid.snap, ssc->snapset, obc->obs.oi);
+    if (r != 0)
+      return r;
   }
   return 0;
 }
