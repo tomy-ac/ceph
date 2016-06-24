@@ -3853,6 +3853,10 @@ int ReplicatedPG::do_tmapup(OpContext *ctx, bufferlist::iterator& bp, OSDOp& osd
     newop.op.extent.offset = 0;
     newop.op.extent.length = 0;
     result = do_osd_ops(ctx, nops);
+    if (result == -ENOENT) {
+      newop.outdata = bufferlist();
+      result = 0;
+    }
 
     dout(10) << "tmapup read " << newop.outdata.length() << dendl;
 
