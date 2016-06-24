@@ -5980,7 +5980,7 @@ int ReplicatedPG::do_osd_ops(OpContext *ctx, vector<OSDOp>& ops)
 
     default:
 
-      if (!obs.exists) {
+      if (!ctx->obc->obs.exists) {
 	result = -ENOENT;
       } else {
 	result = do_replica_safe_read(
