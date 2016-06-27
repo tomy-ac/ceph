@@ -78,6 +78,26 @@ struct OpRequest : public TrackedOp {
   void set_skip_handle_cache();
   void set_skip_promote();
 
+  // get name of object class that op may invoke
+  std::string class_name() const {
+    return class_name_;
+  }
+
+  // set name of object class
+  void set_class_name(const std::string& name) {
+    class_name_ = name;
+  }
+
+  // is class name op may invoke on the whitelist?
+  bool class_whitelisted() const {
+    return class_whitelisted_;
+  }
+
+  // mark object class as whitelisted
+  void set_class_whitelisted() {
+    class_whitelisted_ = true;
+  }
+
   void _dump(utime_t now, Formatter *f) const;
 
   bool has_feature(uint64_t f) const {
@@ -110,6 +130,8 @@ public:
   bool send_map_update;
   epoch_t sent_epoch;
   bool hitset_inserted;
+  bool class_whitelisted_;
+  std::string class_name_;
   Message *get_req() const { return request; }
   bool been_queued_for_pg() { return hit_flag_points & flag_queued_for_pg; }
   bool been_reached_pg() { return hit_flag_points & flag_reached_pg; }

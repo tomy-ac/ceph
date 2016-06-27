@@ -9246,6 +9246,9 @@ int OSD::init_op_flags(OpRequestRef& op)
 	  op->set_class_write();
         if (is_promote)
           op->set_promote();
+        if (cls->whitelisted)
+          op->set_class_whitelisted();
+        op->set_class_name(cname);
 	break;
       }
 

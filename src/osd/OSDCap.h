@@ -144,11 +144,15 @@ struct OSDCap {
    *                          read class method
    * @param op_may_class_write whether the operation needs to call a
    *                          write class method
+   * @param op_class_name name of object class target, if any
+   * @param op_class_whitelisted whether the target object class is on the
+   *          whitelist of classes
    * @return true if the operation is allowed, false otherwise
    */
   bool is_capable(const string& pool_name, const string& ns, int64_t pool_auid,
 		  const string& object, bool op_may_read, bool op_may_write,
-		  bool op_may_class_read, bool op_may_class_write) const;
+		  bool op_may_class_read, bool op_may_class_write,
+		  const string& op_class_name, bool op_class_whitelisted) const;
 };
 
 static inline ostream& operator<<(ostream& out, const OSDCap& cap) 

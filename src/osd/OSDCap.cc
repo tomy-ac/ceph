@@ -132,7 +132,8 @@ void OSDCap::set_allow_all()
 bool OSDCap::is_capable(const string& pool_name, const string& ns, int64_t pool_auid,
 			const string& object, bool op_may_read,
 			bool op_may_write, bool op_may_class_read,
-			bool op_may_class_write) const
+			bool op_may_class_write, const string& op_class_name,
+			bool op_class_whitelisted) const
 {
   osd_rwxa_t allow = 0;
   for (vector<OSDCapGrant>::const_iterator p = grants.begin();
@@ -140,10 +141,22 @@ bool OSDCap::is_capable(const string& pool_name, const string& ns, int64_t pool_
     if (p->match.is_match(pool_name, ns, pool_auid, object)) {
       allow = allow | p->spec.allow;
       if ((op_may_read && !(allow & OSD_CAP_R)) ||
-	  (op_may_write && !(allow & OSD_CAP_W)) ||
-	  (op_may_class_read && !(allow & OSD_CAP_CLS_R)) ||
-	  (op_may_class_write && !(allow & OSD_CAP_CLS_W)))
-	continue;
+          (op_may_write && !(allow & OSD_CAP_W)))
+        continue;
+      if (op_may_class_read || op_may_class_write) {
+        // check 'allow class foo' and 'allow *'
+        if (p->spec.allow_all() ||
+            (op_class_name == p->spec.class_name &&
+             !p->spec.class_name.empty()))
+          return true;
+        if (!op_class_whitelisted)
+          continue;
+        // check 'allow x | class-{rw}': must be on whitelist
+        if ((op_may_class_read && !(allow & OSD_CAP_CLS_R)) ||
+            (op_may_class_write && !(allow & OSD_CAP_CLS_W))) {
+          continue;
+        }
+      }
       return true;
     }
   }
