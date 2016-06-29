@@ -156,6 +156,7 @@ class AsyncConnection : public Connection {
       assert(register_time_events.empty());
       assert(delay_queue.empty());
     }
+    void set_conn_id(uint64_t cid) { conn_id = cid; }
     void do_request(int id) override;
     void queue(double delay_period, utime_t release, Message *m) {
       Mutex::Locker l(delay_lock);
@@ -320,6 +321,7 @@ class AsyncConnection : public Connection {
   EventCallbackRef write_handler;
   EventCallbackRef wakeup_handler;
   EventCallbackRef tick_handler;
+  EventCallbackRef cleanup_handler;
   struct iovec msgvec[ASYNC_IOV_MAX];
   char *recv_buf;
   uint32_t recv_max_prefetch;
@@ -357,6 +359,7 @@ class AsyncConnection : public Connection {
                      // presentation
   bool is_reset_from_peer;
   bool once_ready;
+  bool delay_cleanup = false;
 
   // used only for local state, it will be overwrite when state transition
   char *state_buffer;
@@ -388,7 +391,7 @@ class AsyncConnection : public Connection {
     if (need_queue_reset)
       dispatch_queue->queue_reset(this);
   }
-  void cleanup_handler() {
+  void cleanup() {
     for (auto &&t : register_time_events)
       center->delete_time_event(t);
     register_time_events.clear();
@@ -407,6 +410,7 @@ class AsyncConnection : public Connection {
       delete delay_state;
       delay_state = NULL;
     }
+    cleanup_handler = NULL;
   }
   PerfCounters *get_perf_counter() {
     return logger;
