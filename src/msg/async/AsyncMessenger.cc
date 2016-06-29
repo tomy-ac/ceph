@@ -330,6 +330,7 @@ class WorkerPool {
   };
   friend class C_barrier;
   public:
+  std::atomic_uint pending;
   explicit WorkerPool(CephContext *c);
   WorkerPool(const WorkerPool &) = delete;
   WorkerPool& operator=(const WorkerPool &) = delete;
@@ -358,6 +359,7 @@ void *Worker::entry()
   }
 
   center.set_owner();
+  pool->pending--;
   while (!done) {
     ldout(cct, 20) << __func__ << " calling event process" << dendl;
 
@@ -379,7 +381,7 @@ const string WorkerPool::name = "AsyncMessenger::WorkerPool";
 
 WorkerPool::WorkerPool(CephContext *c): cct(c), started(false),
                                         barrier_lock("WorkerPool::WorkerPool::barrier_lock"),
-                                        barrier_count(0)
+                                        barrier_count(0), pending(0)
 {
   assert(cct->_conf->ms_async_op_threads > 0);
   // make sure user won't try to force some crazy number of worker threads
@@ -418,10 +420,13 @@ void WorkerPool::start()
 {
   if (!started) {
     for (uint64_t i = 0; i < workers.size(); ++i) {
+      pending++;
       workers[i]->create("ms_async_worker");
     }
     started = true;
   }
+  while (pending)
+    usleep(50);
 }
 
 Worker* WorkerPool::get_worker()
@@ -460,6 +465,7 @@ Worker* WorkerPool::get_worker()
      ldout(cct, 20) << __func__ << " creating worker" << dendl;
      current_best = new Worker(cct, this, workers.size());
      workers.push_back(current_best);
+     pending++;
      current_best->create("ms_async_worker");
   } else {
     ldout(cct, 20) << __func__ << " picked " << current_best 
@@ -528,6 +534,7 @@ void AsyncMessenger::ready()
   ldout(cct,10) << __func__ << " " << get_myaddr() << dendl;
 
   Mutex::Locker l(lock);
+  pool->start();
   Worker *w = pool->get_worker();
   processor.start(w);
   dispatch_queue.start();
@@ -602,7 +609,6 @@ int AsyncMessenger::start()
     my_inst.addr.nonce = nonce;
     _init_local_connection();
   }
-  pool->start();
 
   lock.Unlock();
   return 0;
