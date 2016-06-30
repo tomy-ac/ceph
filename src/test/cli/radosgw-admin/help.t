@@ -66,6 +66,7 @@
     zone modify                modify an existing zone
     zone set                   set zone cluster params (requires infile)
     zone list                  list all zones set on this cluster
+    zone rename                rename a zone
     pool add                   add an existing pool for data placement
     pool rm                    remove an existing pool from data placement set
     pools list                 list placement active set
@@ -140,6 +141,7 @@
      --period=<id>             period id
      --epoch=<number>          period epoch
      --commit                  commit the period during 'period update'
+     --staging                 get staging period info
      --master                  set as master
      --master-url              master url
      --master-zonegroup=<id>   master zonegroup id
@@ -181,6 +183,10 @@
      --caps=<caps>             list of caps (e.g., "usage=read, write; user=read"
      --yes-i-really-mean-it    required for certain operations
      --reset-regions           reset regionmap when regionmap update
+     --bypass-gc               when specified with bucket deletion, triggers
+                               object deletions by not involving GC
+     --inconsistent-index      when specified with bucket deletion and bypass-gc set to true,
+                               ignores bucket index consistency
   
   <date> := "YYYY-MM-DD[ hh:mm:ss]"
   

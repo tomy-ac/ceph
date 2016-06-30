@@ -84,6 +84,8 @@ const char *ceph_osd_op_flag_name(unsigned flag);
 string ceph_osd_flag_string(unsigned flags);
 /// conver CEPH_OSD_OP_FLAG_* op flags to a string
 string ceph_osd_op_flag_string(unsigned flags);
+/// conver CEPH_OSD_ALLOC_HINT_FLAG_* op flags to a string
+string ceph_osd_alloc_hint_flag_string(unsigned flags);
 
 struct pg_shard_t {
   int32_t osd;
@@ -1438,7 +1440,6 @@ public:
     return quota_max_objects;
   }
 
-  static int calc_bits_of(int t);
   void calc_pg_masks();
 
   /*
@@ -3030,6 +3031,25 @@ ostream& operator<<(ostream& out, const osd_peer_stat_t &stat);
 // -----------------------------------------
 
 class ObjectExtent {
+  /**
+   * ObjectExtents are used for specifying IO behavior against RADOS
+   * objects when one is using the ObjectCacher.
+   *
+   * To use this in a real system, *every member* must be filled
+   * out correctly. In particular, make sure to initialize the
+   * oloc correctly, as its default values are deliberate poison
+   * and will cause internal ObjectCacher asserts.
+   *
+   * Similarly, your buffer_extents vector *must* specify a total
+   * size equal to your length. If the buffer_extents inadvertently
+   * contain less space than the length member specifies, you
+   * will get unintelligible asserts deep in the ObjectCacher.
+   *
+   * If you are trying to do testing and don't care about actual
+   * RADOS function, the simplest thing to do is to initialize
+   * the ObjectExtent (truncate_size can be 0), create a single entry
+   * in buffer_extents matching the length, and set oloc.pool to 0.
+   */
  public:
   object_t    oid;       // object id
   uint64_t    objectno;
@@ -4315,9 +4335,7 @@ struct PromoteCounter {
 +*/
 struct store_statfs_t
 {
-
-  uint64_t blocks = 0;                 // Total data blocks
-  uint32_t bsize = 0;                  // Optimal transfer block size
+  uint64_t total = 0;                  // Total bytes
   uint64_t available = 0;              // Free bytes available
 
   int64_t allocated = 0;               // Bytes allocated by the store
@@ -4329,7 +4347,7 @@ struct store_statfs_t
   void reset() {
     *this = store_statfs_t();
   }
-
+  bool operator ==(const store_statfs_t& other) const;
   void dump(Formatter *f) const;
 };
 ostream &operator<<(ostream &lhs, const store_statfs_t &rhs);

@@ -427,8 +427,6 @@ void MDCache::create_empty_hierarchy(MDSGather *gather)
 void MDCache::create_mydir_hierarchy(MDSGather *gather)
 {
   // create mds dir
-  char myname[10];
-  snprintf(myname, sizeof(myname), "mds%d", int(mds->get_nodeid()));
   CInode *my = create_system_inode(MDS_INO_MDSDIR(mds->get_nodeid()), S_IFDIR);
 
   CDir *mydir = my->get_or_open_dirfrag(this, frag_t());
@@ -4556,6 +4554,7 @@ CDir *MDCache::rejoin_invent_dirfrag(dirfrag_t df)
   if (!in->is_dir()) {
     assert(in->state_test(CInode::STATE_REJOINUNDEF));
     in->inode.mode = S_IFDIR;
+    in->inode.dir_layout.dl_dir_hash = g_conf->mds_default_dir_hash;
   }
   CDir *dir = in->get_or_open_dirfrag(this, df.frag);
   dir->state_set(CDir::STATE_REJOINUNDEF);
@@ -5751,6 +5750,8 @@ void MDCache::opened_undef_inode(CInode *in) {
   dout(10) << "opened_undef_inode " << *in << dendl;
   rejoin_undef_inodes.erase(in);
   if (in->is_dir()) {
+    // FIXME: re-hash dentries if necessary
+    assert(in->inode.dir_layout.dl_dir_hash == g_conf->mds_default_dir_hash);
     if (in->has_dirfrags() && !in->dirfragtree.is_leaf(frag_t())) {
       CDir *dir = in->get_dirfrag(frag_t());
       assert(dir);
@@ -7221,8 +7222,9 @@ void MDCache::check_memory_usage()
 
   // check client caps
   int num_inodes = inode_map.size();
-  float caps_per_inode = (float)num_caps / (float)num_inodes;
-  //float cap_rate = (float)num_inodes_with_caps / (float)inode_map.size();
+  float caps_per_inode = 0.0;
+  if (num_inodes)
+    caps_per_inode = (float)num_caps / (float)num_inodes;
 
   dout(2) << "check_memory_usage"
 	   << " total " << last.get_total()
@@ -8075,7 +8077,7 @@ void MDCache::open_remote_dentry(CDentry *dn, bool projected, MDSInternalContext
   dout(10) << "open_remote_dentry " << *dn << dendl;
   CDentry::linkage_t *dnl = projected ? dn->get_projected_linkage() : dn->get_linkage();
   inodeno_t ino = dnl->get_remote_ino();
-  uint64_t pool = dnl->get_remote_d_type() == DT_DIR ? mds->mdsmap->get_metadata_pool() : -1;
+  int64_t pool = dnl->get_remote_d_type() == DT_DIR ? mds->mdsmap->get_metadata_pool() : -1;
   open_ino(ino, pool,
       new C_MDC_OpenRemoteDentry(this, dn, ino, fin, want_xlocked), true, want_xlocked); // backtrace
 }
@@ -8513,6 +8515,7 @@ void MDCache::handle_open_ino_reply(MMDSOpenInoReply *m)
       dout(10) << " found ino " << ino << " on mds." << from << dendl;
       if (!info.want_replica) {
 	open_ino_finish(ino, info, from);
+        m->put();
 	return;
       }
 
@@ -8545,7 +8548,7 @@ void MDCache::kick_open_ino_peers(mds_rank_t who)
     open_ino_info_t& info = p->second;
     if (info.checking == who) {
       dout(10) << "  kicking ino " << p->first << " who was checking mds." << who << dendl;
-      info.checking = -1;
+      info.checking = MDS_RANK_NONE;
       do_open_ino_peer(p->first, info);
     } else if (info.checking == MDS_RANK_NONE) {
       dout(10) << "  kicking ino " << p->first << " who was waiting" << dendl;
@@ -8687,7 +8690,7 @@ void MDCache::handle_find_ino_reply(MMDSFindInoReply *m)
 
     mds_rank_t from = mds_rank_t(m->get_source().num());
     if (fip.checking == from)
-      fip.checking = -1;
+      fip.checking = MDS_RANK_NONE;
     fip.checked.insert(from);
 
     if (!m->path.empty()) {
@@ -8720,9 +8723,9 @@ void MDCache::kick_find_ino_peers(mds_rank_t who)
     find_ino_peer_info_t& fip = p->second;
     if (fip.checking == who) {
       dout(10) << "kicking find_ino_peer " << fip.tid << " who was checking mds." << who << dendl;
-      fip.checking = -1;
+      fip.checking = MDS_RANK_NONE;
       _do_find_ino_peer(fip);
-    } else if (fip.checking == -1) {
+    } else if (fip.checking == MDS_RANK_NONE) {
       dout(10) << "kicking find_ino_peer " << fip.tid << " who was waiting" << dendl;
       _do_find_ino_peer(fip);
     }

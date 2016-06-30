@@ -7,6 +7,7 @@
 #include "common/Mutex.h"
 #include "common/RWLock.h"
 #include "common/WorkQueue.h"
+#include "include/Context.h"
 
 #include "librbd/AioObjectRequest.h"
 #include "librbd/AioCompletion.h"
@@ -14,8 +15,6 @@
 #include "librbd/CopyupRequest.h"
 #include "librbd/ExclusiveLock.h"
 #include "librbd/ImageCtx.h"
-#include "librbd/ImageWatcher.h"
-#include "librbd/internal.h"
 #include "librbd/ObjectMap.h"
 #include "librbd/Utils.h"
 
@@ -538,7 +537,7 @@ namespace librbd {
     RWLock::RLocker snap_locker(m_ictx->snap_lock);
     if (m_ictx->enable_alloc_hint &&
         (m_ictx->object_map == nullptr ||
-         !m_ictx->object_map->object_may_exist(m_object_no))) {
+         !m_object_exist)) {
       wr->set_alloc_hint(m_ictx->get_object_size(), m_ictx->get_object_size());
     }
 

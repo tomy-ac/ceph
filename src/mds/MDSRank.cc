@@ -66,6 +66,7 @@ MDSRank::MDSRank(
     stopping(false),
     progress_thread(this), dispatch_depth(0),
     hb(NULL), last_tid(0), osd_epoch_barrier(0), beacon(beacon_),
+    mds_slow_req_count(0),
     last_client_mdsmap_bcast(0),
     messenger(msgr), monc(monc_),
     respawn_hook(respawn_hook_),
@@ -237,7 +238,11 @@ void MDSRankDispatcher::shutdown()
   progress_thread.shutdown();
 
   // shut down messenger
+  // release mds_lock first because messenger thread might call 
+  // MDSDaemon::ms_handle_reset which will try to hold mds_lock
+  mds_lock.Unlock();
   messenger->shutdown();
+  mds_lock.Lock();
 
   // Workaround unclean shutdown: HeartbeatMap will assert if
   // worker is not removed (as we do in ~MDS), but ~MDS is not
@@ -270,7 +275,7 @@ class C_MDS_VoidFn : public MDSInternalContext
   }
 };
 
-uint64_t MDSRank::get_metadata_pool()
+int64_t MDSRank::get_metadata_pool()
 {
     return mdsmap->get_metadata_pool();
 }
@@ -954,7 +959,7 @@ void MDSRank::boot_start(BootStep step, int r)
           mdcache->open_root_inode(gather.new_sub());
         } else {
           // replay.  make up fake root inode to start with
-          mdcache->create_root_inode();
+          (void)mdcache->create_root_inode();
         }
         gather.activate();
       }
@@ -1693,13 +1698,11 @@ bool MDSRankDispatcher::handle_asok_command(
       cond.wait();
     }
   } else if (command == "session ls") {
-    mds_lock.Lock();
+    Mutex::Locker l(mds_lock);
 
     heartbeat_reset();
 
     dump_sessions(SessionFilter(), f);
-
-    mds_lock.Unlock();
   } else if (command == "session evict") {
     std::string client_id;
     const bool got_arg = cmd_getval(g_ceph_context, cmdmap, "client_id", client_id);
@@ -1751,6 +1754,7 @@ bool MDSRankDispatcher::handle_asok_command(
     }
     command_export_dir(f, path, (mds_rank_t)rank);
   } else if (command == "dump cache") {
+    Mutex::Locker l(mds_lock);
     string path;
     if(!cmd_getval(g_ceph_context, cmdmap, "path", path)) {
       mdcache->dump_cache(f);
@@ -1758,17 +1762,13 @@ bool MDSRankDispatcher::handle_asok_command(
       mdcache->dump_cache(path);
     }
   } else if (command == "force_readonly") {
-    mds_lock.Lock();
-    mdcache->force_readonly();
-    mds_lock.Unlock();
-  } else if (command == "dirfrag split") {
     Mutex::Locker l(mds_lock);
+    mdcache->force_readonly();
+  } else if (command == "dirfrag split") {
     command_dirfrag_split(cmdmap, ss);
   } else if (command == "dirfrag merge") {
-    Mutex::Locker l(mds_lock);
     command_dirfrag_merge(cmdmap, ss);
   } else if (command == "dirfrag ls") {
-    Mutex::Locker l(mds_lock);
     command_dirfrag_ls(cmdmap, ss, f);
   } else {
     return false;
@@ -2047,6 +2047,7 @@ int MDSRank::_command_flush_journal(std::stringstream *ss)
 void MDSRank::command_get_subtrees(Formatter *f)
 {
   assert(f != NULL);
+  Mutex::Locker l(mds_lock);
 
   std::list<CDir*> subtrees;
   mdcache->list_subtrees(subtrees);
@@ -2084,6 +2085,7 @@ int MDSRank::_command_export_dir(
     const std::string &path,
     mds_rank_t target)
 {
+  Mutex::Locker l(mds_lock);
   filepath fp(path.c_str());
 
   if (target == whoami || !mdsmap->is_up(target) || !mdsmap->is_in(target)) {
@@ -2159,6 +2161,7 @@ bool MDSRank::command_dirfrag_split(
     cmdmap_t cmdmap,
     std::ostream &ss)
 {
+  Mutex::Locker l(mds_lock);
   if (!mdsmap->allows_dirfrags()) {
     ss << "dirfrags are disallowed by the mds map!";
     return false;
@@ -2189,6 +2192,7 @@ bool MDSRank::command_dirfrag_merge(
     cmdmap_t cmdmap,
     std::ostream &ss)
 {
+  Mutex::Locker l(mds_lock);
   std::string path;
   bool got = cmd_getval(g_ceph_context, cmdmap, "path", path);
   if (!got) {
@@ -2224,6 +2228,7 @@ bool MDSRank::command_dirfrag_ls(
     std::ostream &ss,
     Formatter *f)
 {
+  Mutex::Locker l(mds_lock);
   std::string path;
   bool got = cmd_getval(g_ceph_context, cmdmap, "path", path);
   if (!got) {
@@ -2380,13 +2385,17 @@ void MDSRank::create_logger()
 void MDSRank::check_ops_in_flight()
 {
   vector<string> warnings;
-  if (op_tracker.check_ops_in_flight(warnings)) {
+  int slow = 0;
+  if (op_tracker.check_ops_in_flight(warnings, &slow)) {
     for (vector<string>::iterator i = warnings.begin();
         i != warnings.end();
         ++i) {
       clog->warn() << *i;
     }
   }
+ 
+  // set mds slow request count 
+  mds_slow_req_count = slow;
   return;
 }
 

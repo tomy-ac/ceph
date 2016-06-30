@@ -9,7 +9,7 @@
 
 if [ -n "${CEPH_REF}" ]; then
   wget -O rbd_mirror_helpers.sh "https://git.ceph.com/?p=ceph.git;a=blob_plain;hb=$CEPH_REF;f=qa/workunits/rbd/rbd_mirror_helpers.sh"
-  . rbd_mirror_helpers.sh
+  . ./rbd_mirror_helpers.sh
 else
   . $(dirname $0)/rbd_mirror_helpers.sh
 fi
@@ -181,6 +181,7 @@ set_pool_mirror_mode ${CLUSTER2} ${POOL} 'pool'
 for i in ${image2} ${image4}; do
   wait_for_image_present ${CLUSTER1} ${POOL} ${i} 'present'
   wait_for_snap_present ${CLUSTER1} ${POOL} ${i} 'snap2'
+  wait_for_image_replay_started ${CLUSTER1} ${POOL} ${i}
   wait_for_replay_complete ${CLUSTER1} ${CLUSTER2} ${POOL} ${i}
   compare_images ${POOL} ${i}
 done
@@ -196,5 +197,31 @@ wait_for_image_present ${CLUSTER1} ${POOL} ${image} 'deleted'
 set_pool_mirror_mode ${CLUSTER2} ${POOL} 'pool'
 wait_for_image_present ${CLUSTER1} ${POOL} ${image} 'present'
 wait_for_image_replay_started ${CLUSTER1} ${POOL} ${image}
+
+testlog "TEST: simple image resync"
+request_resync_image ${CLUSTER1} ${POOL} ${image}
+wait_for_image_present ${CLUSTER1} ${POOL} ${image} 'deleted'
+wait_for_image_replay_started ${CLUSTER1} ${POOL} ${image}
+test_status_in_pool_dir ${CLUSTER1} ${POOL} ${image} 'up+replaying' 'master_position'
+compare_images ${POOL} ${image}
+
+testlog "TEST: image resync while replayer is stopped"
+admin_daemon ${CLUSTER1} rbd mirror stop ${POOL}/${image}
+wait_for_image_replay_stopped ${CLUSTER1} ${POOL} ${image}
+request_resync_image ${CLUSTER1} ${POOL} ${image}
+admin_daemon ${CLUSTER1} rbd mirror start ${POOL}/${image}
+wait_for_image_present ${CLUSTER1} ${POOL} ${image} 'deleted'
+admin_daemon ${CLUSTER1} rbd mirror start ${POOL}/${image}
+wait_for_image_replay_started ${CLUSTER1} ${POOL} ${image}
+test_status_in_pool_dir ${CLUSTER1} ${POOL} ${image} 'up+replaying' 'master_position'
+compare_images ${POOL} ${image}
+
+testlog "TEST: request image resync while daemon is offline"
+stop_mirror ${CLUSTER1}
+request_resync_image ${CLUSTER1} ${POOL} ${image}
+start_mirror ${CLUSTER1}
+wait_for_image_replay_started ${CLUSTER1} ${POOL} ${image}
+test_status_in_pool_dir ${CLUSTER1} ${POOL} ${image} 'up+replaying' 'master_position'
+compare_images ${POOL} ${image}
 
 echo OK

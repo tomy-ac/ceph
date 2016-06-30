@@ -555,19 +555,19 @@ public:
     list<std::function<void()>> on_success;
     template <typename F>
     void register_on_finish(F &&f) {
-      on_finish.emplace_back(std::move(f));
+      on_finish.emplace_back(std::forward<F>(f));
     }
     template <typename F>
     void register_on_success(F &&f) {
-      on_success.emplace_back(std::move(f));
+      on_success.emplace_back(std::forward<F>(f));
     }
     template <typename F>
     void register_on_applied(F &&f) {
-      on_applied.emplace_back(std::move(f));
+      on_applied.emplace_back(std::forward<F>(f));
     }
     template <typename F>
     void register_on_commit(F &&f) {
-      on_committed.emplace_back(std::move(f));
+      on_committed.emplace_back(std::forward<F>(f));
     }
 
     bool sent_ack;
@@ -1028,7 +1028,6 @@ protected:
 
   void get_src_oloc(const object_t& oid, const object_locator_t& oloc, object_locator_t& src_oloc);
 
-  SnapSetContext *create_snapset_context(const hobject_t& oid);
   SnapSetContext *get_snapset_context(
     const hobject_t& oid,
     bool can_create,

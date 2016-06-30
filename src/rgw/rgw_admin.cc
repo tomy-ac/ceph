@@ -114,6 +114,7 @@ void _usage()
   cout << "  zone modify                modify an existing zone\n";
   cout << "  zone set                   set zone cluster params (requires infile)\n";
   cout << "  zone list                  list all zones set on this cluster\n";
+  cout << "  zone rename                rename a zone\n";
   cout << "  pool add                   add an existing pool for data placement\n";
   cout << "  pool rm                    remove an existing pool from data placement set\n";
   cout << "  pools list                 list placement active set\n";
@@ -188,6 +189,7 @@ void _usage()
   cout << "   --period=<id>             period id\n";
   cout << "   --epoch=<number>          period epoch\n";
   cout << "   --commit                  commit the period during 'period update'\n";
+  cout << "   --staging                 get staging period info\n";
   cout << "   --master                  set as master\n";
   cout << "   --master-url              master url\n";
   cout << "   --master-zonegroup=<id>   master zonegroup id\n";
@@ -229,6 +231,10 @@ void _usage()
   cout << "   --caps=<caps>             list of caps (e.g., \"usage=read, write; user=read\"\n";
   cout << "   --yes-i-really-mean-it    required for certain operations\n";
   cout << "   --reset-regions           reset regionmap when regionmap update\n";
+  cout << "   --bypass-gc               when specified with bucket deletion, triggers\n";
+  cout << "                             object deletions by not involving GC\n";
+  cout << "   --inconsistent-index      when specified with bucket deletion and bypass-gc set to true,\n";
+  cout << "                             ignores bucket index consistency\n";
   cout << "\n";
   cout << "<date> := \"YYYY-MM-DD[ hh:mm:ss]\"\n";
   cout << "\nQuota options:\n";
@@ -2048,6 +2054,8 @@ int main(int argc, char **argv)
 
   int sync_stats = false;
   int reset_regions = false;
+  int bypass_gc = false;
+  int inconsistent_index = false;
 
   int extra_info = false;
 
@@ -2262,7 +2270,10 @@ int main(int argc, char **argv)
      // do nothing
     } else if (ceph_argparse_binary_flag(args, i, &extra_info, NULL, "--extra-info", (char*)NULL)) {
      // do nothing
-    } else if (ceph_argparse_binary_flag(args, i, &reset_regions, NULL, "--reset-regions", (char*)NULL)) {
+    } else if (ceph_argparse_binary_flag(args, i, &bypass_gc, NULL, "--bypass-gc", (char*)NULL)) {
+     // do nothing
+    } else if (ceph_argparse_binary_flag(args, i, &inconsistent_index, NULL, "--inconsistent-index", (char*)NULL)) {
+     // do nothing
     } else if (ceph_argparse_witharg(args, i, &val, "--caps", (char*)NULL)) {
       caps = val;
     } else if (ceph_argparse_witharg(args, i, &val, "-i", "--infile", (char*)NULL)) {
@@ -3699,6 +3710,7 @@ int main(int argc, char **argv)
   bucket_op.set_check_objects(check_objects);
   bucket_op.set_delete_children(delete_child_objects);
   bucket_op.set_fix_index(fix);
+  bucket_op.set_max_aio(max_concurrent_ios);
 
   // required to gather errors from operations
   std::string err_msg;
@@ -4646,7 +4658,11 @@ next:
   }
 
   if (opt_cmd == OPT_BUCKET_RM) {
-    RGWBucketAdminOp::remove_bucket(store, bucket_op);
+    if (inconsistent_index == false) {
+      RGWBucketAdminOp::remove_bucket(store, bucket_op, bypass_gc, true);
+    } else {
+      RGWBucketAdminOp::remove_bucket(store, bucket_op, bypass_gc, false);
+    }
   }
 
   if (opt_cmd == OPT_GC_LIST) {
