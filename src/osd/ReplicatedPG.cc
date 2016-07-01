@@ -2125,12 +2125,6 @@ void ReplicatedPG::do_op(OpRequestRef& op)
     return;
   }
 
-  if (r) {
-    dout(20) << __func__ << " returned an error: " << r << dendl;
-    reply_ctx(ctx, r);
-    return;
-  }
-
   if (m->has_flag(CEPH_OSD_FLAG_IGNORE_CACHE)) {
     ctx->ignore_cache = true;
   }
@@ -2159,6 +2153,12 @@ void ReplicatedPG::do_op(OpRequestRef& op)
       return;
     }
     reply_ctx(ctx, -ENOENT);
+    return;
+  }
+
+  if (r) {
+    dout(20) << __func__ << " returned an error: " << r << dendl;
+    reply_ctx(ctx, r);
     return;
   }
 
