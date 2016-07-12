@@ -30,7 +30,6 @@ using namespace std;
 #include "include/atomic.h"
 #include "common/Cond.h"
 #include "common/Thread.h"
-#include "common/Throttle.h"
 
 #include "msg/SimplePolicyMessenger.h"
 #include "msg/DispatchQueue.h"
@@ -123,7 +122,7 @@ class Processor {
   void stop();
   int bind(const entity_addr_t &bind_addr, const set<int>& avoid_ports);
   int rebind(const set<int>& avoid_port);
-  int start(Worker *w);
+  void start(Worker *w);
   void accept();
 };
 
@@ -221,8 +220,6 @@ public:
    * @defgroup Inner classes
    * @{
    */
-
-  Connection *create_anon_connection();
 
   /**
    * @} // Inner classes

@@ -43,6 +43,7 @@
 #include "OpRequest.h"
 #include "include/cmp.h"
 #include "librados/ListObjectImpl.h"
+#include <atomic>
 
 #define CEPH_OSD_ONDISK_MAGIC "ceph osd volume v026"
 
@@ -3293,6 +3294,10 @@ struct object_info_t {
   // opportunistic checksums; may or may not be present
   __u32 data_digest;  ///< data crc32c
   __u32 omap_digest;  ///< omap crc32c
+  
+  // alloc hint attribute
+  uint64_t expected_object_size, expected_write_size;
+  uint32_t alloc_hint_flags;
 
   void copy_user_bits(const object_info_t& other);
 
@@ -3363,14 +3368,18 @@ struct object_info_t {
   explicit object_info_t()
     : user_version(0), size(0), flags((flag_t)0),
       truncate_seq(0), truncate_size(0),
-      data_digest(-1), omap_digest(-1)
+      data_digest(-1), omap_digest(-1),
+      expected_object_size(0), expected_write_size(0),
+      alloc_hint_flags(0)
   {}
 
   explicit object_info_t(const hobject_t& s)
     : soid(s),
       user_version(0), size(0), flags((flag_t)0),
       truncate_seq(0), truncate_size(0),
-      data_digest(-1), omap_digest(-1)
+      data_digest(-1), omap_digest(-1),
+      expected_object_size(0), expected_write_size(0),
+      alloc_hint_flags(0)
   {}
 
   explicit object_info_t(bufferlist& bl) {
@@ -4309,24 +4318,26 @@ enum scrub_error_type {
 // PromoteCounter
 
 struct PromoteCounter {
-  atomic64_t attempts, objects, bytes;
+  std::atomic_ullong  attempts{0};
+  std::atomic_ullong  objects{0};
+  std::atomic_ullong  bytes{0};
 
   void attempt() {
-    attempts.inc();
+    attempts++;
   }
 
   void finish(uint64_t size) {
-    objects.inc();
-    bytes.add(size);
+    objects++;
+    bytes += size;
   }
 
   void sample_and_attenuate(uint64_t *a, uint64_t *o, uint64_t *b) {
-    *a = attempts.read();
-    *o = objects.read();
-    *b = bytes.read();
-    attempts.set(*a / 2);
-    objects.set(*o / 2);
-    bytes.set(*b / 2);
+    *a = attempts;
+    *o = objects;
+    *b = bytes;
+    attempts = *a / 2;
+    objects = *o / 2;
+    bytes = *b / 2;
   }
 };
 

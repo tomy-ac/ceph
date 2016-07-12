@@ -86,6 +86,9 @@ CHECK_FUNCTION_EXISTS(name_to_handle_at HAVE_NAME_TO_HANDLE_AT)
 CHECK_FUNCTION_EXISTS(pipe2 HAVE_PIPE2)
 set(CMAKE_REQUIRED_LIBRARIES pthread)
 CHECK_FUNCTION_EXISTS(pthread_spin_init HAVE_PTHREAD_SPINLOCK)
+CHECK_FUNCTION_EXISTS(pthread_set_name_np HAVE_PTHREAD_SET_NAME_NP)
+CHECK_FUNCTION_EXISTS(pthread_setname_np HAVE_PTHREAD_SETNAME_NP)
+CHECK_FUNCTION_EXISTS(pthread_getname_np HAVE_PTHREAD_GETNAME_NP)
 CHECK_FUNCTION_EXISTS(eventfd HAVE_EVENTFD)
 
 CHECK_INCLUDE_FILE_CXX("boost/asio/coroutine.hpp" HAVE_BOOST_ASIO_COROUTINE)
@@ -198,9 +201,6 @@ endif(WITH_SPDK)
 
 find_package(blkid REQUIRED)
 
-# probably fuse etc need this -- how to check? XXX
-option(WITH_MDS "MDS is here" ON)
-
 # needs mds and? XXX
 option(WITH_LIBCEPHFS "libcephfs client library" ON)
 
@@ -218,7 +218,7 @@ endif(${WITH_LEVELDB})
 
 option(WITH_EXPAT "EXPAT is here" ON)
 if(${WITH_EXPAT})
-find_package(expat REQUIRED)
+find_package(EXPAT REQUIRED)
 endif(${WITH_EXPAT})
 
 find_package(Cython REQUIRED)
@@ -273,7 +273,10 @@ find_package(keyutils REQUIRED)
 
 find_package(libuuid REQUIRED)
 
-find_package(libcurl REQUIRED)
+find_package(CURL REQUIRED)
+set(CMAKE_REQUIRED_INCLUDES ${CURL_INCLUDE_DIRS})
+set(CMAKE_REQUIRED_LIBRARIES ${CURL_LIBRARIES})
+CHECK_SYMBOL_EXISTS(curl_multi_wait curl/curl.h HAVE_CURL_MULTI_WAIT)
 
 # nss or cryptopp?
 option(WITH_NSS "Use NSS crypto and SSL implementations" ON)
@@ -367,7 +370,7 @@ find_package(Threads REQUIRED)
 
 option(WITH_SELINUX "build SELinux policy" OFF)
 if(WITH_SELINUX)
-  find_file(SELINUX_MAKEFILE selinux/devel/include/Makefile
+  find_file(SELINUX_MAKEFILE selinux/devel/Makefile
     PATH /usr/share)
   if(NOT SELINUX_MAKEFILE)
     message(FATAL_ERROR "Can't find selinux's Makefile")
@@ -398,3 +401,9 @@ add_subdirectory(doc)
 if(WITH_MANPAGE)
   add_subdirectory(man)
 endif(WITH_MANPAGE)
+
+option(WITH_SYSTEMD "install systemd target and service files" OFF)
+if(WITH_SYSTEMD)
+  add_subdirectory(systemd)
+endif()
+

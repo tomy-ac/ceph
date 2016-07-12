@@ -486,6 +486,7 @@ OPTION(mds_bal_merge_rd, OPT_FLOAT, 1000)
 OPTION(mds_bal_merge_wr, OPT_FLOAT, 1000)
 OPTION(mds_bal_interval, OPT_INT, 10)           // seconds
 OPTION(mds_bal_fragment_interval, OPT_INT, 5)      // seconds
+OPTION(mds_bal_fragment_size_max, OPT_INT, 10000*10) // order of magnitude higher than split size
 OPTION(mds_bal_idle_threshold, OPT_FLOAT, 0)
 OPTION(mds_bal_max, OPT_INT, -1)
 OPTION(mds_bal_max_until, OPT_INT, -1)
@@ -964,6 +965,12 @@ OPTION(bluestore_compression, OPT_STR, "none")  // force|aggressive|passive|none
 OPTION(bluestore_compression_algorithm, OPT_STR, "snappy")
 OPTION(bluestore_compression_min_blob_size, OPT_U32, 256*1024)
 OPTION(bluestore_compression_max_blob_size, OPT_U32, 4*1024*1024)
+/*
+ * Require the net gain of compression at least to be at this ratio,
+ * otherwise we don't compress.
+ * And ask for compressing at least 12.5%(1/8) off, by default.
+ */
+OPTION(bluestore_compression_required_ratio, OPT_DOUBLE, .875)
 OPTION(bluestore_cache_type, OPT_STR, "2q")   // lru, 2q
 OPTION(bluestore_onode_cache_size, OPT_U32, 16*1024)
 OPTION(bluestore_buffer_cache_size, OPT_U32, 512*1024*1024)
@@ -971,6 +978,8 @@ OPTION(bluestore_kvbackend, OPT_STR, "rocksdb")
 OPTION(bluestore_allocator, OPT_STR, "bitmap")     // stupid | bitmap
 OPTION(bluestore_freelist_type, OPT_STR, "bitmap") // extent | bitmap
 OPTION(bluestore_freelist_blocks_per_key, OPT_INT, 128)
+OPTION(bluestore_bitmapallocator_blocks_per_zone, OPT_INT, 1024) // must be power of 2 aligned, e.g., 512, 1024, 2048...
+OPTION(bluestore_bitmapallocator_span_size, OPT_INT, 1024) // must be power of 2 aligned, e.g., 512, 1024, 2048...
 OPTION(bluestore_rocksdb_options, OPT_STR, "compression=kNoCompression,max_write_buffer_number=16,min_write_buffer_number_to_merge=3,recycle_log_file_num=16")
 OPTION(bluestore_fsck_on_mount, OPT_BOOL, false)
 OPTION(bluestore_fsck_on_umount, OPT_BOOL, false)
@@ -1366,6 +1375,7 @@ OPTION(rgw_enable_usage_log, OPT_BOOL, false) // enable logging bandwidth usage
 OPTION(rgw_ops_log_rados, OPT_BOOL, true) // whether ops log should go to rados
 OPTION(rgw_ops_log_socket_path, OPT_STR, "") // path to unix domain socket where ops log can go
 OPTION(rgw_ops_log_data_backlog, OPT_INT, 5 << 20) // max data backlog for ops log
+OPTION(rgw_fcgi_socket_backlog, OPT_INT, 1024) // socket  backlog for fcgi
 OPTION(rgw_usage_log_flush_threshold, OPT_INT, 1024) // threshold to flush pending log data
 OPTION(rgw_usage_log_tick_interval, OPT_INT, 30) // flush pending log data every X seconds
 OPTION(rgw_intent_log_object_name, OPT_STR, "%Y-%m-%d-%i-%n")  // man date to see codes (a subset are supported)

@@ -10,6 +10,7 @@ set(bindir ${CMAKE_INSTALL_FULL_BINDIR})
 set(sbindir ${CMAKE_INSTALL_FULL_SBINDIR})
 set(libdir ${CMAKE_INSTALL_FULL_LIBDIR})
 set(sysconfdir ${CMAKE_INSTALL_FULL_SYSCONFDIR})
+set(libexecdir ${CMAKE_INSTALL_FULL_LIBEXECDIR})
 set(pkgdatadir ${CMAKE_INSTALL_FULL_DATADIR})
 set(datadir ${CMAKE_INSTALL_FULL_DATADIR}/${PROJECT_NAME})
 set(prefix ${CMAKE_INSTALL_PREFIX})
@@ -243,21 +244,6 @@ if(NOT PYTHONINTERP_FOUND)
   message(FATAL_ERROR "Python 2 interpreter not found.")
 endif(NOT PYTHONINTERP_FOUND)
 find_package(PythonLibs REQUIRED)
-
-# if CMAKE_INSTALL_PREFIX is an empty string, must replace
-# it with "/" to make PYTHON_INSTALL_TEMPLATE an absolute path to be
-# consistent with all other installation paths.
-if(CMAKE_INSTALL_PREFIX)
-  set(PYTHON_INSTALL_TEMPLATE "${CMAKE_INSTALL_PREFIX}")
-else(CMAKE_INSTALL_PREFIX)
-  set(PYTHON_INSTALL_TEMPLATE "/")
-endif(CMAKE_INSTALL_PREFIX)
-
-execute_process(
-  COMMAND
-  ${PYTHON_EXECUTABLE} -c "from distutils import sysconfig; print sysconfig.get_python_lib(1,0,prefix='${PYTHON_INSTALL_TEMPLATE}')"
-  OUTPUT_VARIABLE PYTHON_INSTDIR
-  OUTPUT_STRIP_TRAILING_WHITESPACE)
 
 if(HAVE_XIO)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I${XIO_INCLUDE_DIR}")
@@ -537,9 +523,6 @@ add_library(global STATIC ${libglobal_srcs}
   $<TARGET_OBJECTS:global_common_objs>)
 target_link_libraries(global common ${CMAKE_THREAD_LIBS_INIT} ${CRYPTO_LIBS}
   ${EXTRALIBS})
-if(${WITH_LTTNG})
-  target_link_libraries(global lttng-ust dl)
-endif(${WITH_LTTNG})
 
 # rados object classes
 add_subdirectory(cls)
@@ -561,7 +544,6 @@ add_library(librados_objs OBJECT
   librados/RadosClient.cc)
 add_library(librados ${CEPH_SHARED}
   librados/librados.cc
-  $<TARGET_OBJECTS:cls_references_objs>
   $<TARGET_OBJECTS:common_util_obj>
   $<TARGET_OBJECTS:librados_objs>)
 add_dependencies(librados osdc)
@@ -569,7 +551,7 @@ if(WITH_LTTNG)
   add_dependencies(librados rados-tp)
 endif()
 # LINK_PRIVATE instead of PRIVATE is used to backward compatibility with cmake 2.8.11
-target_link_libraries(librados LINK_PRIVATE osdc osd os global common cls_lock_client
+target_link_libraries(librados LINK_PRIVATE osdc common cls_lock_client
   ${BLKID_LIBRARIES} ${CRYPTO_LIBS} ${EXTRALIBS})
 if(ENABLE_SHARED)
   set_target_properties(librados PROPERTIES
@@ -623,7 +605,7 @@ target_link_libraries(ceph-monstore-tool os global ${Boost_PROGRAM_OPTIONS_LIBRA
 install(TARGETS ceph-monstore-tool DESTINATION bin)
 install(PROGRAMS
   tools/ceph-monstore-update-crush.sh
-  DESTINATION lib/ceph)
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/ceph)
 
 add_executable(ceph-objectstore-tool
   tools/ceph_objectstore_tool.cc
@@ -690,9 +672,6 @@ target_link_libraries(librados-config librados global ${BLKID_LIBRARIES}
   ${CMAKE_DL_LIBS})
 
 install(TARGETS rados librados-config DESTINATION bin)
-
-install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/pybind/
-  DESTINATION ${PYTHON_INSTDIR})
 
 # virtualenv base directory for ceph-disk and ceph-detect-init
 set(CEPH_BUILD_VIRTUALENV $ENV{TMPDIR})
@@ -917,6 +896,7 @@ if(HAVE_LIBAIO)
   install(TARGETS ceph-bluefs-tool
     DESTINATION bin)
 endif()
+add_dependencies(os compressor_plugins)
 
 set(cls_references_files objclass/class_api.cc)
 add_library(cls_references_objs OBJECT ${cls_references_files})
@@ -972,56 +952,54 @@ endif(${HAVE_LIBFUSE})
 install(TARGETS ceph-osd DESTINATION bin)
 
 # MDS
-if(${WITH_MDS})
-  set(mds_srcs
-    mds/Capability.cc
-    mds/MDSDaemon.cc
-    mds/MDSRank.cc
-    mds/Beacon.cc
-    mds/flock.cc
-    mds/locks.c
-    mds/journal.cc
-    mds/Server.cc
-    mds/Mutation.cc
-    mds/MDCache.cc
-    mds/RecoveryQueue.cc
-    mds/StrayManager.cc
-    mds/Locker.cc
-    mds/Migrator.cc
-    mds/MDBalancer.cc
-    mds/CDentry.cc
-    mds/CDir.cc
-    mds/CInode.cc
-    mds/LogEvent.cc
-    mds/MDSTable.cc
-    mds/InoTable.cc
-    mds/JournalPointer.cc
-    mds/MDSTableClient.cc
-    mds/MDSTableServer.cc
-    mds/ScrubStack.cc
-    mds/DamageTable.cc
-    mds/SimpleLock.cc
-    mds/SnapRealm.cc
-    mds/SnapServer.cc
-    mds/snap.cc
-    mds/SessionMap.cc
-    mds/MDSContext.cc
-    mds/MDSAuthCaps.cc
-    mds/MDLog.cc
-    ${CMAKE_SOURCE_DIR}/src/common/TrackedOp.cc
-    ${CMAKE_SOURCE_DIR}/src/osdc/Journaler.cc)
-  add_library(mds STATIC ${mds_srcs}
-    $<TARGET_OBJECTS:heap_profiler_objs>
-    $<TARGET_OBJECTS:common_util_obj>)
-  target_link_libraries(mds ${ALLOC_LIBS} osdc common)
-  set(ceph_mds_srcs
-    ceph_mds.cc)
-  add_executable(ceph-mds ${ceph_mds_srcs}
-    $<TARGET_OBJECTS:common_util_obj>)
-  target_link_libraries(ceph-mds mds ${CMAKE_DL_LIBS} global
-    ${Boost_THREAD_LIBRARY})
-  install(TARGETS ceph-mds DESTINATION bin)
-endif(${WITH_MDS})
+set(mds_srcs
+  mds/Capability.cc
+  mds/MDSDaemon.cc
+  mds/MDSRank.cc
+  mds/Beacon.cc
+  mds/flock.cc
+  mds/locks.c
+  mds/journal.cc
+  mds/Server.cc
+  mds/Mutation.cc
+  mds/MDCache.cc
+  mds/RecoveryQueue.cc
+  mds/StrayManager.cc
+  mds/Locker.cc
+  mds/Migrator.cc
+  mds/MDBalancer.cc
+  mds/CDentry.cc
+  mds/CDir.cc
+  mds/CInode.cc
+  mds/LogEvent.cc
+  mds/MDSTable.cc
+  mds/InoTable.cc
+  mds/JournalPointer.cc
+  mds/MDSTableClient.cc
+  mds/MDSTableServer.cc
+  mds/ScrubStack.cc
+  mds/DamageTable.cc
+  mds/SimpleLock.cc
+  mds/SnapRealm.cc
+  mds/SnapServer.cc
+  mds/snap.cc
+  mds/SessionMap.cc
+  mds/MDSContext.cc
+  mds/MDSAuthCaps.cc
+  mds/MDLog.cc
+  ${CMAKE_SOURCE_DIR}/src/common/TrackedOp.cc
+  ${CMAKE_SOURCE_DIR}/src/osdc/Journaler.cc)
+add_library(mds STATIC ${mds_srcs}
+  $<TARGET_OBJECTS:heap_profiler_objs>
+  $<TARGET_OBJECTS:common_util_obj>)
+target_link_libraries(mds ${ALLOC_LIBS} osdc common)
+set(ceph_mds_srcs
+  ceph_mds.cc)
+add_executable(ceph-mds ${ceph_mds_srcs}
+  $<TARGET_OBJECTS:common_util_obj>)
+target_link_libraries(ceph-mds mds ${CMAKE_DL_LIBS} global
+  ${Boost_THREAD_LIBRARY})
+install(TARGETS ceph-mds DESTINATION bin)
 
 add_subdirectory(erasure-code)
 
@@ -1107,7 +1085,6 @@ install(PROGRAMS
   ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ceph-post-file
   ${CMAKE_SOURCE_DIR}/src/ceph-run
   ${CMAKE_SOURCE_DIR}/src/ceph-rest-api
-  ${CMAKE_SOURCE_DIR}/src/vstart.sh
   ${CMAKE_SOURCE_DIR}/src/ceph-clsinfo
   DESTINATION bin)
 install(PROGRAMS
@@ -1121,14 +1098,10 @@ install(FILES
   ${CMAKE_SOURCE_DIR}/share/known_hosts_drop.ceph.com
   DESTINATION ${CMAKE_INSTALL_DATADIR}/ceph)
 
-install(FILES
-  ${CMAKE_SOURCE_DIR}/doc/start/ceph.conf
-  DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/ceph/ RENAME ceph.conf.example)
-
 install(PROGRAMS
   ceph_common.sh
   ceph-osd-prestart.sh
-  DESTINATION ${CMAKE_INSTALL_PREFIX}/lib/ceph)
+  DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/ceph)
 
 install(PROGRAMS
   ${CMAKE_SOURCE_DIR}/src/ceph-create-keys
@@ -1156,10 +1129,8 @@ if(WITH_LIBCEPHFS)
   target_link_libraries(client osdc mds)
   set(libcephfs_srcs libcephfs.cc)
   add_library(cephfs ${CEPH_SHARED} ${libcephfs_srcs}
-    $<TARGET_OBJECTS:cls_references_objs>
     $<TARGET_OBJECTS:common_util_obj>)
-  target_link_libraries(cephfs LINK_PRIVATE client osdc osd os global common
-    ${BLKID_LIBRARIES}
+  target_link_libraries(cephfs LINK_PRIVATE client
     ${CRYPTO_LIBS} ${EXTRALIBS})
   if(ENABLE_SHARED)
     set_target_properties(cephfs PROPERTIES
@@ -1327,8 +1298,11 @@ if(${WITH_RBD})
     ${Boost_REGEX_LIBRARY} ${Boost_PROGRAM_OPTIONS_LIBRARY}
     ${BLKID_LIBRARIES} ${CMAKE_DL_LIBS})
   install(TARGETS rbd rbd-nbd rbd-mirror DESTINATION bin)
-  install(PROGRAMS ${CMAKE_SOURCE_DIR}/src/ceph-rbdnamer DESTINATION bin)
-  install(PROGRAMS ${CMAKE_SOURCE_DIR}/src/rbdmap DESTINATION bin)
+  install(PROGRAMS
+    ${CMAKE_SOURCE_DIR}/src/ceph-rbdnamer
+    ${CMAKE_SOURCE_DIR}/src/rbd-replay-many
+    ${CMAKE_SOURCE_DIR}/src/rbdmap
+    DESTINATION ${CMAKE_INSTALL_BINDIR})
   add_subdirectory(rbd_replay)
 endif(${WITH_RBD})
 
@@ -1338,7 +1312,7 @@ if(${WITH_KVS})
     key_value_store/cls_kvs.cc)
   add_library(cls_kvs SHARED ${kvs_srcs})
   set_target_properties(cls_kvs PROPERTIES VERSION "1.0.0" SOVERSION "1")
-  install(TARGETS cls_kvs DESTINATION lib/rados-classes)
+  install(TARGETS cls_kvs DESTINATION ${CMAKE_INSTALL_LIBDIR}/rados-classes)
 endif(${WITH_KVS})
 
 if(${WITH_RADOSGW})
@@ -1426,9 +1400,10 @@ if(${WITH_RADOSGW})
   endif(HAVE_SSL)
 
   add_library(rgw_a STATIC ${rgw_a_srcs})
+  target_include_directories(rgw_a PUBLIC ${FCGI_INCLUDE_DIR})
   target_link_libraries(rgw_a librados cls_rgw_client cls_refcount_client
     cls_log_client cls_statelog_client cls_timeindex_client cls_version_client
-    cls_replica_log_client cls_user_client curl global expat)
+    cls_replica_log_client cls_user_client curl global expat ${OPENLDAP_LIBS})
 
   set(radosgw_srcs
     rgw/rgw_fcgi_process.cc
@@ -1471,7 +1446,7 @@ if(${WITH_RADOSGW})
   set_target_properties(rgw PROPERTIES OUTPUT_NAME rgw VERSION 2.0.0
     SOVERSION 1)
 
-  install(TARGETS rgw DESTINATION lib)
+  install(TARGETS rgw DESTINATION ${CMAKE_INSTALL_LIBDIR})
   install(FILES
     include/rados/librgw.h
     include/rados/rgw_file.h
@@ -1483,7 +1458,7 @@ if(${WITH_RADOSGW})
     cls_log_client cls_statelog_client cls_timeindex_client
     cls_version_client cls_replica_log_client cls_user_client
     curl expat global fcgi resolv ${SSL_LIBRARIES} ${BLKID_LIBRARIES}
-    ${OPENLDAP_LIBS} ${ALLOC_LIBS})
+    ${ALLOC_LIBS})
   # radosgw depends on cls libraries at runtime, but not as link dependencies
   add_dependencies(radosgw cls_rgw cls_lock cls_refcount
     cls_log cls_statelog cls_timeindex

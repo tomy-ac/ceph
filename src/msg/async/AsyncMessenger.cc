@@ -104,7 +104,7 @@ int Processor::bind(const entity_addr_t &bind_addr, const set<int>& avoid_ports)
     listen_sd = -1;
     return r;
   }
-
+  net.set_close_on_exec(listen_sd);
   net.set_socket_options(listen_sd);
 
   // use whatever user specified (if anything)
@@ -237,7 +237,7 @@ int Processor::rebind(const set<int>& avoid_ports)
   return bind(addr, new_avoid);
 }
 
-int Processor::start(Worker *w)
+void Processor::start(Worker *w)
 {
   ldout(msgr->cct, 1) << __func__ << " " << dendl;
 
@@ -246,8 +246,6 @@ int Processor::start(Worker *w)
     worker = w;
     w->center.create_file_event(listen_sd, EVENT_READABLE, listen_handler);
   }
-
-  return 0;
 }
 
 void Processor::accept()
@@ -258,6 +256,7 @@ void Processor::accept()
     socklen_t slen = sizeof(ss);
     int sd = ::accept(listen_sd, (sockaddr*)&ss, &slen);
     if (sd >= 0) {
+      net.set_close_on_exec(sd);
       ldout(msgr->cct, 10) << __func__ << " accepted incoming on sd " << sd << dendl;
 
       msgr->add_accept(sd);
@@ -814,12 +813,6 @@ void AsyncMessenger::mark_down(const entity_addr_t& addr)
   lock.Unlock();
 }
 
-Connection *AsyncMessenger::create_anon_connection() {
-  Mutex::Locker l(lock);
-  Worker *w = pool->get_worker();
-  return new AsyncConnection(cct, this, &dispatch_queue, w);
-}
-
 int AsyncMessenger::get_proto_version(int peer_type, bool connect)
 {
   int my_type = my_inst.name.type();
@@ -830,18 +823,10 @@ int AsyncMessenger::get_proto_version(int peer_type, bool connect)
     return cluster_protocol;
   } else {
     // public
-    if (connect) {
-      switch (peer_type) {
-        case CEPH_ENTITY_TYPE_OSD: return CEPH_OSDC_PROTOCOL;
-        case CEPH_ENTITY_TYPE_MDS: return CEPH_MDSC_PROTOCOL;
-        case CEPH_ENTITY_TYPE_MON: return CEPH_MONC_PROTOCOL;
-      }
-    } else {
-      switch (my_type) {
-        case CEPH_ENTITY_TYPE_OSD: return CEPH_OSDC_PROTOCOL;
-        case CEPH_ENTITY_TYPE_MDS: return CEPH_MDSC_PROTOCOL;
-        case CEPH_ENTITY_TYPE_MON: return CEPH_MONC_PROTOCOL;
-      }
+    switch (connect ? peer_type : my_type) {
+      case CEPH_ENTITY_TYPE_OSD: return CEPH_OSDC_PROTOCOL;
+      case CEPH_ENTITY_TYPE_MDS: return CEPH_MDSC_PROTOCOL;
+      case CEPH_ENTITY_TYPE_MON: return CEPH_MONC_PROTOCOL;
     }
   }
   return 0;

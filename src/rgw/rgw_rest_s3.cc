@@ -746,6 +746,11 @@ int RGWSetBucketVersioning_ObjStore_S3::get_params()
     return r;
   }
 
+  if (!store->is_meta_master()) {
+    /* only need to keep this data around if we're not meta master */
+    in_data.append(data, len);
+  }
+
   r = parser.get_versioning_status(&enable_versioning);
   
   return r;
@@ -2308,7 +2313,8 @@ int RGWPutCORS_ObjStore_S3::get_params()
   if (s->aws4_auth_needs_complete) {
     int ret_auth = do_aws4_auth_completion();
     if (ret_auth < 0) {
-      return ret_auth;
+      r = ret_auth;
+      goto done_err;
     }
   }
 
@@ -3662,7 +3668,7 @@ int RGW_Auth_S3::authorize_v4(RGWRados *store, struct req_state *s)
     }
     string token_value = string(t);
     if (using_qs && (token == "host")) {
-      if (!port.empty() && port != "80") {
+      if (!port.empty() && port != "80" && port != "0") {
         token_value = token_value + ":" + port;
       } else if (!secure_port.empty() && secure_port != "443") {
         token_value = token_value + ":" + secure_port;

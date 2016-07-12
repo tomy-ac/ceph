@@ -221,13 +221,27 @@ if test x"$with_cython" = xyes; then
     if test x"$CYTHON_CHECK" != xyes; then
         AC_MSG_FAILURE([cython not found])
     fi
-    AC_CHECK_PROG(PYTHON_CONFIG_CHECK, python-config, yes)
-    if test x"$PYTHON_CONFIG_CHECK" != xyes; then
-        AC_MSG_FAILURE([python-config not found])
+
+    # Check if we are running inside a Python virtual environment
+    # Both `virtualenv' as well as PEP 405 `pyvenv' set the VIRTUAL_ENV
+    # environment variable upon activation
+    if test x"$VIRTUAL_ENV" != x; then
+        PYTHON="python"
     fi
-    PYTHON_CFLAGS=`python-config --cflags`
+
+    # Set PYTHON to default system Python version if not specified
+    if test x"$PYTHON" = x; then
+        PYTHON="python"
+    fi
+
+    AC_CHECK_PROG(PYTHON_CONFIG_CHECK, "$PYTHON"-config, yes)
+    if test x"$PYTHON_CONFIG_CHECK" != xyes; then
+        AC_MSG_FAILURE(["$PYTHON"-config not found])
+    fi
+
+    PYTHON_CFLAGS=`"$PYTHON"-config --cflags`
     AC_SUBST(PYTHON_CFLAGS)
-    PYTHON_LDFLAGS=`python-config --ldflags`
+    PYTHON_LDFLAGS=`"$PYTHON"-config --ldflags`
     AC_SUBST(PYTHON_LDFLAGS)
 fi
 
@@ -244,14 +258,7 @@ AC_CHECK_PROG(YASM_CHECK, yasm, yes)
 if test x"$YASM_CHECK" = x"yes"; then
   if yasm -f elf64 src/common/crc32c_intel_fast_asm.S -o /dev/null; then
      echo 'we have a modern and working yasm'
-     # FreeBSD has uname -p not arch(1), so do not exec arch
-     arch_x86_64=0
-     if test x`uname -p`x = x"amd64"x ; then
-	arch_x86_64=1
-     elif which arch 2>&1 > /dev/null; then 
-	test x`arch`x = x"x86_64"x  && arch_x86_64=1
-     fi
-     if test $arch_x86_64 -eq 1 ; then
+     if test x`uname -m`x = x"x86_64"x || test x`uname -m`x = x"amd64"x; then
         echo 'we are x86_64'
         arch_x32=0
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [[
@@ -354,38 +361,42 @@ if test x"$linux" = x"yes"; then
 fi
 
 #
-# Check for res_nquery in libresolv. There are several variations. On OSX
+# Check for res_nquery or res_query in libresolv. There are several variations. On OSX
 # res_nquery is a macro defined in resolv.h, so the typical AC_CHECK_LIB
-# doesn't work. On FreeBSD res_nquery can be found in libc. The required
-# library for linking (if any) is defined RESOLV_LIBS.
+# doesn't work. On FreeBSD res_nquery can be found in libc. On Alpine res_query can be
+# found in libc. The required library for linking (if any) is defined RESOLV_LIBS.
 #
 AC_CHECK_HEADER([resolv.h], [], [], [#include <netinet/in.h>])
 
 AC_DEFUN([CHECK_RESOLV_LIBS], [{
-  AC_MSG_CHECKING([if res_nquery will link (LIBS=$1)])
+  AC_MSG_CHECKING([if $1 will link (LIBS=$3)])
   saved_LIBS="${LIBS}"
-  LIBS="$1"
+  LIBS="$3"
   AC_LINK_IFELSE([AC_LANG_PROGRAM([[
         #include <netinet/in.h>
         #include <resolv.h>
-      ]], [[res_nquery(0, 0, 0, 0, 0, 0);]])],
+      ]], [[$1$2;]])],
       [AC_MSG_RESULT([yes])
-      [$2]],
+      AC_DEFINE(AS_TR_CPP([HAVE_$1]), 1, [Define if you have $1])
+      [$4]],
       AC_MSG_RESULT([no]))
   LIBS="${saved_LIBS}"
 }])
 
 RESOLV_LIBS=""
-CHECK_RESOLV_LIBS([$RESOLV_LIBS], [resolv_libs="ok"])
+CHECK_RESOLV_LIBS([res_nquery], [(0, 0, 0, 0, 0, 0)], [$RESOLV_LIBS], [resolv_libs="ok"])
 if test x"$resolv_libs" != "xok"; then
   RESOLV_LIBS="-lresolv"
-  CHECK_RESOLV_LIBS([$RESOLV_LIBS], [resolv_libs="ok"])
+  CHECK_RESOLV_LIBS([res_nquery], [(0, 0, 0, 0, 0, 0)], [$RESOLV_LIBS], [resolv_libs="ok"])
   if test x"$resolv_libs" != "xok"; then
-    AC_MSG_FAILURE([no resolv library found])
+    RESOLV_LIBS=""
+    CHECK_RESOLV_LIBS([res_query], [(0, 0, 0, 0, 0)], [$RESOLV_LIBS], [resolv_libs="ok"])
+    if test x"$resolv_libs" != "xok"; then
+      AC_MSG_FAILURE([no resolv library found])
+    fi
   fi
 fi
 AC_SUBST([RESOLV_LIBS])
-AC_DEFINE(HAVE_RES_NQUERY, 1, [Define if you have res_nquery])
 
 dnl check for libkeyutils on linux
 KEYUTILS_LIB=""
@@ -525,7 +536,7 @@ AS_IF([test "x$with_radosgw" != xno],
               [AC_CHECK_LIB([curl], [curl_easy_init],
                [RADOSGW=1
 	        AC_CHECK_HEADER([fastcgi/fcgiapp.h],
-		 [AC_DEFINE([FASTCGI_INCLUDE_DIR], [1], [FastCGI headers are in /usr/include/fastcgi])])
+		 [RGW_CXXFLAGS="-I/usr/include/fastcgi"])
 	       ],
 	       [if test "x$with_radosgw" != "xcheck"; then
 		    AC_MSG_FAILURE([--with-radosgw was given but libcurl (libcurl-dev on debian) not found])
@@ -538,6 +549,7 @@ AS_IF([test "x$with_radosgw" != xno],
 	     [if test "x$with_radosgw" != "xcheck"; then
 		AC_MSG_FAILURE([--with-radosgw was given but libfcgi (libfcgi-dev on debian) not found])
 	     fi])])
+AC_SUBST(RGW_CXXFLAGS)
 AM_CONDITIONAL(WITH_RADOSGW, test "$RADOSGW" = "1")
 
 AS_IF([test "$RADOSGW" = "1"], [AC_DEFINE([WITH_RADOSGW], [1], [define if radosgw enabled])])
@@ -1154,6 +1166,7 @@ LIBS="$PTHREAD_LIBS $LIBS"
 CFLAGS="$PTHREAD_CFLAGS $CFLAGS"
 AC_CHECK_FUNC([pthread_spin_init],
   [AC_DEFINE(HAVE_PTHREAD_SPINLOCK, 1, [Define if you have pthread_spin_init])])
+AC_CHECK_FUNCS([pthread_getname_np pthread_setname_np pthread_set_name_np])
 LIBS="$saved_LIBS"
 CFLAGS="$saved_CFLAGS"
 

@@ -360,6 +360,7 @@ void Client::tear_down_cache()
 
 inodeno_t Client::get_root_ino()
 {
+  Mutex::Locker l(client_lock);
   if (use_faked_inos())
     return root->faked_ino;
   else
@@ -368,6 +369,7 @@ inodeno_t Client::get_root_ino()
 
 Inode *Client::get_root()
 {
+  Mutex::Locker l(client_lock);
   root->ll_get();
   return root;
 }
@@ -8585,13 +8587,10 @@ int Client::_write(Fh *f, int64_t offset, uint64_t size, const char *buf,
     unsafe_sync_write++;
     get_cap_ref(in, CEPH_CAP_FILE_BUFFER);  // released by onsafe callback
 
-    r = filer->write_trunc(in->ino, &in->layout, in->snaprealm->get_snap_context(),
+    filer->write_trunc(in->ino, &in->layout, in->snaprealm->get_snap_context(),
 			   offset, size, bl, ceph::real_clock::now(cct), 0,
 			   in->truncate_size, in->truncate_seq,
 			   onfinish, new C_OnFinisher(onsafe, &objecter_finisher));
-    if (r < 0)
-      goto done;
-
     client_lock.Unlock();
     flock.Lock();
 
@@ -8796,7 +8795,7 @@ int Client::_fsync(Fh *f, bool syncdataonly)
 int Client::fstat(int fd, struct stat *stbuf, int mask)
 {
   Mutex::Locker lock(client_lock);
-  tout(cct) << "fstat mask " << hex << mask << std::endl;
+  tout(cct) << "fstat mask " << hex << mask << dec << std::endl;
   tout(cct) << fd << std::endl;
 
   Fh *f = get_filehandle(fd);
@@ -11665,14 +11664,12 @@ int Client::_fallocate(Fh *fh, int mode, int64_t offset, int64_t length)
       get_cap_ref(in, CEPH_CAP_FILE_BUFFER);
 
       _invalidate_inode_cache(in, offset, length);
-      r = filer->zero(in->ino, &in->layout,
+      filer->zero(in->ino, &in->layout,
 		      in->snaprealm->get_snap_context(),
 		      offset, length,
 		      ceph::real_clock::now(cct),
 		      0, true, onfinish,
 		      new C_OnFinisher(onsafe, &objecter_finisher));
-      assert(r == 0);
-
       in->mtime = ceph_clock_now(cct);
       mark_caps_dirty(in, CEPH_CAP_FILE_WR);
 

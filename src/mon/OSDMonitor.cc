@@ -4216,13 +4216,12 @@ bool OSDMonitor::update_pools_status()
         mon->clog->warn() << "pool '" << pool_name << "' is full"
                          << " (reached quota's max_bytes: "
                          << si_t(pool.quota_max_bytes) << ")";
-      } else if (pool.quota_max_objects > 0 &&
+      }
+      if (pool.quota_max_objects > 0 &&
 		 (uint64_t)sum.num_objects >= pool.quota_max_objects) {
         mon->clog->warn() << "pool '" << pool_name << "' is full"
                          << " (reached quota's max_objects: "
                          << pool.quota_max_objects << ")";
-      } else {
-        assert(0 == "we shouldn't reach this");
       }
       update_pool_flags(it->first, pool.get_flags() | pg_pool_t::FLAG_FULL);
       ret = true;
@@ -4872,7 +4871,7 @@ bool OSDMonitor::prepare_set_flag(MonOpRequestRef op, int flag)
   if (pending_inc.new_flags < 0)
     pending_inc.new_flags = osdmap.get_flags();
   pending_inc.new_flags |= flag;
-  ss << "set " << OSDMap::get_flag_string(flag);
+  ss << OSDMap::get_flag_string(flag) << " is set";
   wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, ss.str(),
 						    get_last_committed() + 1));
   return true;
@@ -4885,7 +4884,7 @@ bool OSDMonitor::prepare_unset_flag(MonOpRequestRef op, int flag)
   if (pending_inc.new_flags < 0)
     pending_inc.new_flags = osdmap.get_flags();
   pending_inc.new_flags &= ~flag;
-  ss << "unset " << OSDMap::get_flag_string(flag);
+  ss << OSDMap::get_flag_string(flag) << " is unset";
   wait_for_finished_proposal(op, new Monitor::C_Command(mon, op, 0, ss.str(),
 						    get_last_committed() + 1));
   return true;
