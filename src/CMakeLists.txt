@@ -98,14 +98,18 @@ endif(no_yasm)
 set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -ftemplate-depth-1024 -Wno-invalid-offsetof -Wnon-virtual-dtor -Wno-invalid-offsetof -Wstrict-null-sentinel -Woverloaded-virtual")
 
 # require c++11
-include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
-if (COMPILER_SUPPORTS_CXX11)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+if(CMAKE_VERSION VERSION_LESS "3.1")
+  include(CheckCXXCompilerFlag)
+  CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
+  if(COMPILER_SUPPORTS_CXX11)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+  else()
+    message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support.")
+  endif()
 else()
-  message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support.")
+  set(CMAKE_CXX_STANDARD 11)
+  set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
-
 
 ## Handle diagnostics color if compiler supports them.
 
@@ -684,6 +688,12 @@ add_subdirectory(ceph-disk)
 add_subdirectory(ceph-detect-init)
 
 ## dencoder
+CHECK_C_COMPILER_FLAG("-fvar-tracking-assignments" HAS_VTA)
+if(HAS_VTA)
+  set_source_files_properties(test/encoding/ceph_dencoder.cc
+    PROPERTIES COMPILE_FLAGS -fno-var-tracking-assignments)
+endif()
+
 set(dencoder_srcs
   test/encoding/ceph_dencoder.cc
   $<TARGET_OBJECTS:krbd_objs>
@@ -1010,7 +1020,7 @@ target_link_libraries(crushtool global)
 install(TARGETS crushtool DESTINATION bin)
 
 # Support/Tools
-add_subdirectory(gmock)
+add_subdirectory(googletest/googlemock)
 
 add_subdirectory(test)
 set(cephfs_srcs cephfs.cc)

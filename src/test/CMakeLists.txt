@@ -1,7 +1,7 @@
 include(AddCephTest)
 
 set(UNITTEST_LIBS gmock_main gmock gtest ${PTHREAD_LIBS} ${CMAKE_DL_LIBS})
-set(UNITTEST_CXX_FLAGS "-I${CMAKE_SOURCE_DIR}/src/gmock/include -I${CMAKE_BINARY_DIR}/src/gmock/include -I${CMAKE_SOURCE_DIR}/src/gmock/gtest/include -I${CMAKE_BINARY_DIR}/src/gmock/gtest/include -fno-strict-aliasing")
+set(UNITTEST_CXX_FLAGS "-I${CMAKE_SOURCE_DIR}/src/googletest/googlemock/include -I${CMAKE_BINARY_DIR}/src/googletest/googlemock/include -I${CMAKE_SOURCE_DIR}/src/googletest/googletest/include -I${CMAKE_BINARY_DIR}/src/googletest/googletest/include -fno-strict-aliasing")
 
 add_subdirectory(bench)
 add_subdirectory(cls_hello)
@@ -357,7 +357,7 @@ add_executable(ceph_perf_local
   perf_local.cc
   perf_helper.cc)
 #INTEL_SSE & INTEL_SSE2 flags
-set(PERF_LOCAL_FLAGS "${CMAKE_CXX_FLAGS} -msse -msse2") 
+set(PERF_LOCAL_FLAGS "-msse -msse2")
 set_target_properties(ceph_perf_local PROPERTIES COMPILE_FLAGS
   ${PERF_LOCAL_FLAGS})
 target_link_libraries(ceph_perf_local os global ${UNITTEST_LIBS})
