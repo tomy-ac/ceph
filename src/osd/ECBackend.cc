@@ -180,6 +180,7 @@ ECBackend::ECBackend(
   : PGBackend(pg, store, coll, ch),
     cct(cct),
     ec_impl(ec_impl),
+    extent_cache(),
     sinfo(ec_impl->get_data_chunk_count(), stripe_width) {
   assert((ec_impl->get_data_chunk_count() *
 	  ec_impl->get_chunk_size(stripe_width)) == stripe_width);
@@ -1763,6 +1764,9 @@ void ECBackend::check_op(Op *op)
     dout(10) << __func__ << " Completing " << *op << dendl;
     writing.pop_front();
     tid_to_op_map.erase(op->tid);
+    bufferlist hbl;
+    op->hoid.encode(hbl);
+    extent_cache.set_evict(hbl.c_str());
   }
   for (map<ceph_tid_t, Op>::iterator i = tid_to_op_map.begin();
        i != tid_to_op_map.end();
@@ -1786,6 +1790,7 @@ void ECBackend::start_write(Op *op) {
     ec_impl,
     get_parent()->get_info().pgid.pgid,
     sinfo,
+    extent_cache,
     &trans,
     &(op->temp_added),
     &(op->temp_cleared));
@@ -1854,54 +1859,111 @@ struct CallClientContexts :
   ECBackend::ClientAsyncReadStatus *status;
   list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
 	    pair<bufferlist*, Context*> > > to_read;
+  extents_set out_set;
   CallClientContexts(
     ECBackend *ec,
     ECBackend::ClientAsyncReadStatus *status,
     const list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		    pair<bufferlist*, Context*> > > &to_read)
-    : ec(ec), status(status), to_read(to_read) {}
+		    pair<bufferlist*, Context*> > > &to_read, extents_set out_set)
+    : ec(ec), status(status), to_read(to_read), out_set(out_set) {}
   void finish(pair<RecoveryMessages *, ECBackend::read_result_t &> &in) {
     ECBackend::read_result_t &res = in.second;
+/*
     if (res.r != 0)
       goto out;
     assert(res.returned.size() == to_read.size());
     assert(res.r == 0);
     assert(res.errors.empty());
+*/
+    extents_set::iterator esi = out_set.begin();
     for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
-		   pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
-	 i != to_read.end();
-	 to_read.erase(i++)) {
-      pair<uint64_t, uint64_t> adjusted =
-	ec->sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
-      assert(res.returned.front().get<0>() == adjusted.first &&
-	     res.returned.front().get<1>() == adjusted.second);
-      map<int, bufferlist> to_decode;
-      bufferlist bl;
-      for (map<pg_shard_t, bufferlist>::iterator j =
-	     res.returned.front().get<2>().begin();
-	   j != res.returned.front().get<2>().end();
-	   ++j) {
-	to_decode[j->first.shard].claim(j->second);
+        pair<bufferlist*, Context*> > >::iterator i = to_read.begin();
+        i != to_read.end();
+	to_read.erase(i++), esi++) {
+      unsigned curr_off = i->first.get<0>();
+      unsigned curr_len =  i->first.get<1>();
+      unsigned tmp_len=0;
+      for(extents::iterator ei = esi->begin(); ei != esi->end(); ei ++){
+	tmp_len=0;
+	if(curr_off < ei->offset()){
+	  tmp_len = ei->offset() - curr_off;
+	  pair<uint64_t, uint64_t> adjusted =
+	    ec->sinfo.offset_len_to_stripe_bounds(make_pair(curr_off, tmp_len));
+	  assert(res.returned.front().get<0>() == adjusted.first &&
+	      res.returned.front().get<1>() == adjusted.second);
+	  map<int, bufferlist> to_decode;
+	  bufferlist bl;
+	  for (map<pg_shard_t, bufferlist>::iterator j =
+	      res.returned.front().get<2>().begin();
+	      j != res.returned.front().get<2>().end();
+	      ++j) {
+	    to_decode[j->first.shard].claim(j->second);
+	  }
+
+	  int r = ECUtil::decode(
+	      ec->sinfo,
+	      ec->ec_impl,
+	      to_decode,
+	      &bl);
+
+	  if (r < 0) {
+	    res.r = r;
+	    goto out;
+	  }
+
+	  bufferlist tmp;
+	  tmp.substr_of(
+	      bl,
+	      curr_off - adjusted.first,
+	      MIN(tmp_len, bl.length() - (curr_off - adjusted.first)));
+	  assert(i->second.first);
+	  i->second.first->append(tmp);
+	  curr_len -= tmp_len;
+	  res.returned.pop_front();
+	}
+
+	assert(i->second.first);
+	i->second.first->append(ei->data());
+	curr_off = ei->offset() + ei->length()+1;
+	curr_len -= ei->length();
       }
-      int r = ECUtil::decode(
-	ec->sinfo,
-	ec->ec_impl,
-	to_decode,
-	&bl);
-      if (r < 0) {
-        res.r = r;
-        goto out;
+      if(curr_len > 0){
+	pair<uint64_t, uint64_t> adjusted =
+	  ec->sinfo.offset_len_to_stripe_bounds(make_pair(curr_off, curr_len));
+	assert(res.returned.front().get<0>() == adjusted.first &&
+	    res.returned.front().get<1>() == adjusted.second);
+	map<int, bufferlist> to_decode;
+	bufferlist bl;
+	for (map<pg_shard_t, bufferlist>::iterator j =
+	    res.returned.front().get<2>().begin();
+	    j != res.returned.front().get<2>().end();
+	    ++j) {
+	  to_decode[j->first.shard].claim(j->second);
+	}
+
+	int r = ECUtil::decode(
+	    ec->sinfo,
+	    ec->ec_impl,
+	    to_decode,
+	    &bl);
+
+	if (r < 0) {
+	  res.r = r;
+	  goto out;
+	}
+
+	bufferlist tmp;
+	tmp.substr_of(
+	    bl,
+	    curr_off - adjusted.first,
+	    MIN(curr_len, bl.length() - (curr_off - adjusted.first)));
+	assert(i->second.first);
+	i->second.first->append(tmp);
+	res.returned.pop_front();
       }
-      assert(i->second.second);
-      assert(i->second.first);
-      i->second.first->substr_of(
-	bl,
-	i->first.get<0>() - adjusted.first,
-	MIN(i->first.get<1>(), bl.length() - (i->first.get<0>() - adjusted.first)));
       if (i->second.second) {
 	i->second.second->complete(i->second.first->length());
       }
-      res.returned.pop_front();
     }
 out:
     status->complete = true;
@@ -1933,9 +1995,12 @@ void ECBackend::objects_read_async(
   bool fast_read)
 {
   in_progress_client_reads.push_back(ClientAsyncReadStatus(on_complete));
-  CallClientContexts *c = new CallClientContexts(
-    this, &(in_progress_client_reads.back()), to_read);
-
+  extents out;
+  extents_set out_set;
+  bufferlist hbl;
+  hoid.encode(hbl);
+  unsigned ret = 0;
+  
   list<boost::tuple<uint64_t, uint64_t, uint32_t> > offsets;
   pair<uint64_t, uint64_t> tmp;
   for (list<pair<boost::tuple<uint64_t, uint64_t, uint32_t>,
@@ -1943,9 +2008,28 @@ void ECBackend::objects_read_async(
 	 to_read.begin();
        i != to_read.end();
        ++i) {
-    tmp = sinfo.offset_len_to_stripe_bounds(make_pair(i->first.get<0>(), i->first.get<1>()));
-    offsets.push_back(boost::make_tuple(tmp.first, tmp.second, i->first.get<2>()));
+    out.clear();
+    ret = extent_cache.get(hbl.c_str(), i->first.get<0>(), i->first.get<1>(), &out);
+    out_set.insert(out);
+    assert(ret <= i->first.get<1>());
+    if(ret == i->first.get<1>()){
+      tmp = sinfo.offset_len_to_stripe_bounds(make_pair(0, 0));
+      offsets.push_back(boost::make_tuple(tmp.first, tmp.second, i->first.get<2>()));
+    } else {
+      unsigned curr_off = i->first.get<0>();
+      for(extents::iterator ei = out.begin(); ei != out.end(); ei++){
+	assert(curr_off <= ei->offset());
+	if(ei->offset() > curr_off){
+	  tmp = sinfo.offset_len_to_stripe_bounds(make_pair(curr_off, ei->offset() - curr_off));
+	  offsets.push_back(boost::make_tuple(tmp.first, tmp.second, i->first.get<2>()));
+	}
+	curr_off = ei->offset() + ei->length();
+      }
+    }
   }
+
+  CallClientContexts *c = new CallClientContexts(
+    this, &(in_progress_client_reads.back()), to_read, out_set);
 
   set<int> want_to_read;
   get_want_to_read_shards(&want_to_read);

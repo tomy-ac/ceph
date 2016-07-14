@@ -20,6 +20,7 @@
 #include "erasure-code/ErasureCodeInterface.h"
 #include "ECUtil.h"
 #include "ECTransaction.h"
+#include "ECCache.hpp"
 
 //forward declaration
 struct ECSubWrite;
@@ -451,7 +452,7 @@ public:
     return new ECReadPred(get_parent()->whoami_shard(), ec_impl);
   }
 
-
+  ECCache extent_cache;
   const ECUtil::stripe_info_t sinfo;
   /// If modified, ensure that the ref is held until the update is applied
   SharedPtrRegistry<hobject_t, ECUtil::HashInfo, hobject_t::BitwiseComparator> unstable_hashinfo_registry;
