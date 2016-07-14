@@ -61,6 +61,7 @@ struct TransGenerator : public boost::static_visitor<void> {
   ErasureCodeInterfaceRef &ecimpl;
   const pg_t pgid;
   const ECUtil::stripe_info_t sinfo;
+  ECCache &extent_cache;
   map<shard_id_t, ObjectStore::Transaction> *trans;
   set<int> want;
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added;
@@ -71,6 +72,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     ErasureCodeInterfaceRef &ecimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
+    ECCache &extent_cache,
     map<shard_id_t, ObjectStore::Transaction> *trans,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
@@ -78,6 +80,7 @@ struct TransGenerator : public boost::static_visitor<void> {
     : hash_infos(hash_infos),
       ecimpl(ecimpl), pgid(pgid),
       sinfo(sinfo),
+      extent_cache(extent_cache),
       trans(trans),
       temp_added(temp_added), temp_removed(temp_removed),
       out(out) {
@@ -133,6 +136,10 @@ struct TransGenerator : public boost::static_visitor<void> {
     assert(bl.length());
     assert(offset % sinfo.get_stripe_width() == 0);
     map<int, bufferlist> buffers;
+
+    bufferlist hbl;
+    op.oid.encode(hbl);
+    extent_cache.put(hbl.c_str(), offset, bl);
 
     assert(hash_infos.count(op.oid));
     ECUtil::HashInfoRef hinfo = hash_infos[op.oid];
@@ -281,6 +288,7 @@ void ECTransaction::generate_transactions(
   ErasureCodeInterfaceRef &ecimpl,
   pg_t pgid,
   const ECUtil::stripe_info_t &sinfo,
+  ECCache &extent_cache,
   map<shard_id_t, ObjectStore::Transaction> *transactions,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
   set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,
@@ -291,6 +299,7 @@ void ECTransaction::generate_transactions(
     ecimpl,
     pgid,
     sinfo,
+    extent_cache,
     transactions,
     temp_added,
     temp_removed,
