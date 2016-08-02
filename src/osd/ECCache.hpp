@@ -3,7 +3,8 @@
 /*
  * Ceph - scalable distributed file system
  *
- * Copyright (C) 2016 Tomy Cheru <tomy.cheru@sandisk.com>
+ * Copyright (C) 2016 Western Digital Corporation.
+ * Author: Tomy Cheru <tomy.cheru@sandisk.com>
  *
  * This is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -243,23 +244,23 @@ class ECCache
       if(Cit != cache.end()){
 	ecc_object TmpCacheObj = *Cit;
 	cache.erase(key);
-	lock.Unlock();
 	ret = TmpCacheObj.put_extent(off, data);
 	cache.insert(TmpCacheObj);
 	current_cap += ret;
+	lock.Unlock();
       } else {
 	ecc_object TmpCacheObj(key, false, {});
 	cache.insert(TmpCacheObj);
+	lock.Unlock();
 	put(key, off, data);
 
       }
-      lock.Unlock();
       return ret;
     }
 
     int get(std::string key, unsigned off, unsigned len, extents *out)
     {
-      Mutex::Locker l(lock);
+      //Mutex::Locker l(lock);
       uint64_t ret = 0;
       Cache::iterator Cit = cache.find(key);
       if(Cit != cache.end()){
