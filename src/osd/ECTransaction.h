@@ -19,6 +19,7 @@
 #include "PGBackend.h"
 #include "ECUtil.h"
 #include "erasure-code/ErasureCodeInterface.h"
+#include "ECCache.hpp"
 
 class ECTransaction : public PGBackend::PGTransaction {
 public:
@@ -203,6 +204,7 @@ public:
     ErasureCodeInterfaceRef &ecimpl,
     pg_t pgid,
     const ECUtil::stripe_info_t &sinfo,
+    ECCache &extent_cache,
     map<shard_id_t, ObjectStore::Transaction> *transactions,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_added,
     set<hobject_t, hobject_t::BitwiseComparator> *temp_removed,

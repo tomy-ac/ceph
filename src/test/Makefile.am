@@ -235,6 +235,11 @@ unittest_osdmap_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_osdmap_LDADD = $(UNITTEST_LDADD) $(LIBCOMMON) $(CEPH_GLOBAL)
 check_TESTPROGRAMS += unittest_osdmap
 
+unittest_osd_eccache_SOURCES = test/osd/TestECCache.cc
+unittest_osd_eccache_CXXFLAGS = $(UNITTEST_CXXFLAGS)
+unittest_osd_eccache_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
+check_TESTPROGRAMS += unittest_osd_eccache
+
 unittest_workqueue_SOURCES = test/test_workqueue.cc
 unittest_workqueue_CXXFLAGS = $(UNITTEST_CXXFLAGS)
 unittest_workqueue_LDADD = $(UNITTEST_LDADD) $(CEPH_GLOBAL)
